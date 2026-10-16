@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 420" width="100%" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px;">
+<text x="80" y="30" font-size="16" font-weight="700" fill="#111827">How Many Parallel Flows Can You Run Without Hurting Latency?</text>
+<text x="80" y="50" font-size="12" fill="#4b5563">Max parallel workflows supported while keeping p95 latency ≤ 1.5× (244 ms) or ≤ 2.0× (325 ms) of single-flow baseline (163 ms).</text>
+<rect x="80" y="63" width="14" height="14" rx="3" fill="#16a34a"/>
+<text x="100" y="74" font-size="12" font-weight="600" fill="#1f2937">Strict SLA: p95 ≤ 1.5× baseline (244 ms)</text>
+<rect x="394.0" y="63" width="14" height="14" rx="3" fill="#2563eb"/>
+<text x="414.0" y="74" font-size="12" font-weight="600" fill="#1f2937">Relaxed SLA: p95 ≤ 2.0× baseline (325 ms)</text>
+<line x1="80" y1="358.0" x2="880" y2="358.0" stroke="#d1d5db" stroke-width="1"/>
+<text x="70" y="362.0" font-size="11" fill="#6b7280" text-anchor="end">0.00 wf</text>
+<line x1="80" y1="306.4" x2="880" y2="306.4" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="310.4" font-size="11" fill="#6b7280" text-anchor="end">40.0 wf</text>
+<line x1="80" y1="254.8" x2="880" y2="254.8" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="258.8" font-size="11" fill="#6b7280" text-anchor="end">80.0 wf</text>
+<line x1="80" y1="203.2" x2="880" y2="203.2" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="207.2" font-size="11" fill="#6b7280" text-anchor="end">120 wf</text>
+<line x1="80" y1="151.6" x2="880" y2="151.6" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="155.6" font-size="11" fill="#6b7280" text-anchor="end">160 wf</text>
+<line x1="80" y1="100.0" x2="880" y2="100.0" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="104.0" font-size="11" fill="#6b7280" text-anchor="end">200 wf</text>
+<text x="160.0" y="380" font-size="12" font-weight="600" fill="#374151" text-anchor="middle">1 worker (4 slots)</text>
+<rect x="116.0" y="351.6" width="42.0" height="6.4" rx="3" fill="#16a34a"/>
+<text x="137.0" y="345.6" font-size="11" font-weight="700" fill="#16a34a" text-anchor="middle">5.00 wf</text>
+<rect x="162.0" y="347.8" width="42.0" height="10.2" rx="3" fill="#2563eb"/>
+<text x="183.0" y="341.8" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">7.90 wf</text>
+<text x="320.0" y="380" font-size="12" font-weight="600" fill="#374151" text-anchor="middle">2 workers (8 slots)</text>
+<rect x="276.0" y="344.5" width="42.0" height="13.5" rx="3" fill="#16a34a"/>
+<text x="297.0" y="338.5" font-size="11" font-weight="700" fill="#16a34a" text-anchor="middle">10.5 wf</text>
+<rect x="322.0" y="335.8" width="42.0" height="22.2" rx="3" fill="#2563eb"/>
+<text x="343.0" y="329.8" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">17.2 wf</text>
+<text x="480.0" y="380" font-size="12" font-weight="600" fill="#374151" text-anchor="middle">4 workers (16 slots)</text>
+<rect x="436.0" y="324.5" width="42.0" height="33.5" rx="3" fill="#16a34a"/>
+<text x="457.0" y="318.5" font-size="11" font-weight="700" fill="#16a34a" text-anchor="middle">26.0 wf</text>
+<rect x="482.0" y="307.0" width="42.0" height="51.0" rx="3" fill="#2563eb"/>
+<text x="503.0" y="301.0" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">39.5 wf</text>
+<text x="640.0" y="380" font-size="12" font-weight="600" fill="#374151" text-anchor="middle">8 workers (32 slots)</text>
+<rect x="596.0" y="274.4" width="42.0" height="83.6" rx="3" fill="#16a34a"/>
+<text x="617.0" y="268.4" font-size="11" font-weight="700" fill="#16a34a" text-anchor="middle">64.8 wf</text>
+<rect x="642.0" y="231.6" width="42.0" height="126.4" rx="3" fill="#2563eb"/>
+<text x="663.0" y="225.6" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">98.0 wf</text>
+<text x="800.0" y="380" font-size="12" font-weight="600" fill="#374151" text-anchor="middle">16 workers (64 slots)</text>
+<rect x="756.0" y="222.4" width="42.0" height="135.6" rx="3" fill="#16a34a"/>
+<text x="777.0" y="216.4" font-size="11" font-weight="700" fill="#16a34a" text-anchor="middle">105 wf</text>
+<rect x="802.0" y="180.5" width="42.0" height="177.5" rx="3" fill="#2563eb"/>
+<text x="823.0" y="174.5" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">138 wf</text>
+<text x="480.0" y="406" font-size="12" font-weight="600" fill="#374151" text-anchor="middle">Worker fleet size (Python agent workers + Go tool workers)</text>
+<text x="18" y="229.0" font-size="12" font-weight="600" fill="#374151" text-anchor="middle" transform="rotate(-90 18 229.0)">Max parallel workflows supported</text>
+</svg>

@@ -42,6 +42,9 @@ var outbox = struct {
 // arrives here as an ordinary signal payload; turning it into a permanent
 // failure is what makes plexus-flow roll back the refund.
 func SendReply(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+	if err := benchSleep(ctx); err != nil {
+		return nil, err
+	}
 	var t Ticket
 	_ = json.Unmarshal(input, &t)
 	approval, err := dep[Approval](ctx, "await-approval")

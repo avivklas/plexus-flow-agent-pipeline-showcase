@@ -29,6 +29,7 @@ OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 QUIET = os.environ.get("SHOWCASE_QUIET") == "1"
+BENCH_STEP_MS = float(os.environ.get("BENCH_STEP_MS", "0"))  # simulated step I/O time (ms) for scaling benchmarks
 LEDGER_ENABLED = os.environ.get("LLM_LEDGER", "1") != "0"  # the benchmark turns it off
 LEDGER_DIR = Path(os.environ.get("LLM_LEDGER_DIR", Path(__file__).resolve().parent.parent / "data" / "llm_calls"))
 
@@ -55,6 +56,8 @@ async def complete(
 
     started = time.monotonic()
     if BACKEND == "mock":
+        if BENCH_STEP_MS > 0:
+            await asyncio.sleep(BENCH_STEP_MS / 1000)
         out = mock()
     elif BACKEND == "openai":
         try:

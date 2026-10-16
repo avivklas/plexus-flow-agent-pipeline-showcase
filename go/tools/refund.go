@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -31,6 +32,26 @@ const (
 
 // quiet silences per-step logs (set by the benchmark).
 var quiet = os.Getenv("SHOWCASE_QUIET") == "1"
+
+// benchStepDur simulates external API latency (e.g. Stripe/Helpdesk) when BENCH_STEP_MS > 0.
+var benchStepDur = func() time.Duration {
+	if ms, err := strconv.ParseFloat(os.Getenv("BENCH_STEP_MS"), 64); err == nil && ms > 0 {
+		return time.Duration(ms * float64(time.Millisecond))
+	}
+	return 0
+}()
+
+func benchSleep(ctx context.Context) error {
+	if benchStepDur <= 0 {
+		return nil
+	}
+	select {
+	case <-time.After(benchStepDur):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 func logf(color, tag, format string, args ...any) {
 	if quiet {
@@ -99,6 +120,9 @@ func workflowID(ctx context.Context) string {
 
 // IssueRefund executes the refund the planner proposed.
 func IssueRefund(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+	if err := benchSleep(ctx); err != nil {
+		return nil, err
+	}
 	var t Ticket
 	_ = json.Unmarshal(input, &t)
 	plan, err := dep[Plan](ctx, "resolution-plan")

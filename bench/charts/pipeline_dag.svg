@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 460" width="100%" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px;">
+<text x="80" y="30" font-size="16" font-weight="700" fill="#111827">Workflow DAG Size vs. Latency (10 Parallel Workflows, 0 ms Steps)</text>
+<text x="80" y="50" font-size="12" fill="#4b5563">10* is the real 10-step agent pipeline; 12–100 are synthetic fork-join DAGs (1 step fans out to 3, repeated).</text>
+<line x1="80.0" y1="70" x2="100.0" y2="70" stroke="#2563eb" stroke-width="2.5"/>
+<circle cx="90.0" cy="70" r="3.5" fill="#2563eb"/>
+<text x="106.0" y="74" font-size="12" font-weight="600" fill="#1f2937">p50 (median latency)</text>
+<line x1="238.0" y1="70" x2="258.0" y2="70" stroke="#ea580c" stroke-width="2.5"/>
+<circle cx="248.0" cy="70" r="3.5" fill="#ea580c"/>
+<text x="264.0" y="74" font-size="12" font-weight="600" fill="#1f2937">p95 latency</text>
+<line x1="338.4" y1="70" x2="358.4" y2="70" stroke="#dc2626" stroke-width="2.5"/>
+<circle cx="348.4" cy="70" r="3.5" fill="#dc2626"/>
+<text x="364.4" y="74" font-size="12" font-weight="600" fill="#1f2937">p99 (tail latency)</text>
+<line x1="80" y1="398.0" x2="735" y2="398.0" stroke="#d1d5db" stroke-width="1"/>
+<text x="70" y="402.0" font-size="11" fill="#6b7280" text-anchor="end">0.00 ms</text>
+<line x1="80" y1="338.8" x2="735" y2="338.8" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="342.8" font-size="11" fill="#6b7280" text-anchor="end">120 ms</text>
+<line x1="80" y1="279.6" x2="735" y2="279.6" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="283.6" font-size="11" fill="#6b7280" text-anchor="end">240 ms</text>
+<line x1="80" y1="220.4" x2="735" y2="220.4" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="224.4" font-size="11" fill="#6b7280" text-anchor="end">360 ms</text>
+<line x1="80" y1="161.2" x2="735" y2="161.2" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="165.2" font-size="11" fill="#6b7280" text-anchor="end">480 ms</text>
+<line x1="80" y1="102.0" x2="735" y2="102.0" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="106.0" font-size="11" fill="#6b7280" text-anchor="end">600 ms</text>
+<line x1="80.0" y1="102" x2="80.0" y2="398" stroke="#f9fafb" stroke-width="1"/>
+<line x1="80.0" y1="398" x2="80.0" y2="403" stroke="#9ca3af" stroke-width="1"/>
+<text x="80.0" y="418" font-size="11" font-weight="500" fill="#374151" text-anchor="middle">10*</text>
+<line x1="243.8" y1="102" x2="243.8" y2="398" stroke="#f9fafb" stroke-width="1"/>
+<line x1="243.8" y1="398" x2="243.8" y2="403" stroke="#9ca3af" stroke-width="1"/>
+<text x="243.8" y="418" font-size="11" font-weight="500" fill="#374151" text-anchor="middle">12</text>
+<line x1="407.5" y1="102" x2="407.5" y2="398" stroke="#f9fafb" stroke-width="1"/>
+<line x1="407.5" y1="398" x2="407.5" y2="403" stroke="#9ca3af" stroke-width="1"/>
+<text x="407.5" y="418" font-size="11" font-weight="500" fill="#374151" text-anchor="middle">24</text>
+<line x1="571.2" y1="102" x2="571.2" y2="398" stroke="#f9fafb" stroke-width="1"/>
+<line x1="571.2" y1="398" x2="571.2" y2="403" stroke="#9ca3af" stroke-width="1"/>
+<text x="571.2" y="418" font-size="11" font-weight="500" fill="#374151" text-anchor="middle">48</text>
+<line x1="735.0" y1="102" x2="735.0" y2="398" stroke="#f9fafb" stroke-width="1"/>
+<line x1="735.0" y1="398" x2="735.0" y2="403" stroke="#9ca3af" stroke-width="1"/>
+<text x="735.0" y="418" font-size="11" font-weight="500" fill="#374151" text-anchor="middle">100</text>
+<text x="407.5" y="446" font-size="12" font-weight="600" fill="#374151" text-anchor="middle">Total steps per workflow</text>
+<text x="18" y="250.0" font-size="12" font-weight="600" fill="#374151" text-anchor="middle" transform="rotate(-90 18 250.0)">Workflow latency (ms)</text>
+<polyline fill="none" stroke="#2563eb" stroke-width="2.5" points="80.0,394.8 243.8,392.9 407.5,377.8 571.2,331.6 735.0,142.2"/>
+<circle cx="80.0" cy="394.8" r="4" fill="#ffffff" stroke="#2563eb" stroke-width="2.2"/>
+<circle cx="243.8" cy="392.9" r="4" fill="#ffffff" stroke="#2563eb" stroke-width="2.2"/>
+<circle cx="407.5" cy="377.8" r="4" fill="#ffffff" stroke="#2563eb" stroke-width="2.2"/>
+<circle cx="571.2" cy="331.6" r="4" fill="#ffffff" stroke="#2563eb" stroke-width="2.2"/>
+<circle cx="735.0" cy="142.2" r="4" fill="#ffffff" stroke="#2563eb" stroke-width="2.2"/>
+<polyline fill="none" stroke="#ea580c" stroke-width="2.5" points="80.0,388.9 243.8,392.1 407.5,375.2 571.2,324.4 735.0,130.5"/>
+<circle cx="80.0" cy="388.9" r="4" fill="#ffffff" stroke="#ea580c" stroke-width="2.2"/>
+<circle cx="243.8" cy="392.1" r="4" fill="#ffffff" stroke="#ea580c" stroke-width="2.2"/>
+<circle cx="407.5" cy="375.2" r="4" fill="#ffffff" stroke="#ea580c" stroke-width="2.2"/>
+<circle cx="571.2" cy="324.4" r="4" fill="#ffffff" stroke="#ea580c" stroke-width="2.2"/>
+<circle cx="735.0" cy="130.5" r="4" fill="#ffffff" stroke="#ea580c" stroke-width="2.2"/>
+<polyline fill="none" stroke="#dc2626" stroke-width="2.5" points="80.0,385.9 243.8,391.9 407.5,374.9 571.2,324.3 735.0,130.2"/>
+<circle cx="80.0" cy="385.9" r="4" fill="#ffffff" stroke="#dc2626" stroke-width="2.2"/>
+<circle cx="243.8" cy="391.9" r="4" fill="#ffffff" stroke="#dc2626" stroke-width="2.2"/>
+<circle cx="407.5" cy="374.9" r="4" fill="#ffffff" stroke="#dc2626" stroke-width="2.2"/>
+<circle cx="571.2" cy="324.3" r="4" fill="#ffffff" stroke="#dc2626" stroke-width="2.2"/>
+<circle cx="735.0" cy="130.2" r="4" fill="#ffffff" stroke="#dc2626" stroke-width="2.2"/>
+<line x1="740.0" y1="130.2" x2="742.0" y2="130.2" stroke="#dc2626" stroke-width="1" stroke-opacity="0.6"/>
+<text x="745.0" y="134.2" font-size="11.5" font-weight="600" fill="#dc2626">p99: 543 ms</text>
+<line x1="740.0" y1="130.5" x2="742.0" y2="146.2" stroke="#ea580c" stroke-width="1" stroke-opacity="0.6"/>
+<text x="745.0" y="150.2" font-size="11.5" font-weight="600" fill="#ea580c">p95: 542 ms</text>
+<line x1="740.0" y1="142.2" x2="742.0" y2="162.2" stroke="#2563eb" stroke-width="1" stroke-opacity="0.6"/>
+<text x="745.0" y="166.2" font-size="11.5" font-weight="600" fill="#2563eb">p50: 519 ms</text>
+</svg>

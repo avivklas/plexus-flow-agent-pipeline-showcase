@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 460" width="100%" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px;">
+<text x="80" y="30" font-size="16" font-weight="700" fill="#111827">Pure Engine Orchestration Latency vs. Parallel Flows (0 ms step work)</text>
+<text x="80" y="50" font-size="12" fill="#4b5563">Workers return immediately (0 ms), isolating the plexus-flow coordinator&#x27;s Raft commit + gRPC dispatch cost.</text>
+<line x1="80.0" y1="70" x2="100.0" y2="70" stroke="#16a34a" stroke-width="2.5"/>
+<circle cx="90.0" cy="70" r="3.5" fill="#16a34a"/>
+<text x="106.0" y="74" font-size="12" font-weight="600" fill="#1f2937">p50 (median latency)</text>
+<line x1="238.0" y1="70" x2="258.0" y2="70" stroke="#ea580c" stroke-width="2.5"/>
+<circle cx="248.0" cy="70" r="3.5" fill="#ea580c"/>
+<text x="264.0" y="74" font-size="12" font-weight="600" fill="#1f2937">p95 latency</text>
+<line x1="338.4" y1="70" x2="358.4" y2="70" stroke="#dc2626" stroke-width="2.5"/>
+<circle cx="348.4" cy="70" r="3.5" fill="#dc2626"/>
+<text x="364.4" y="74" font-size="12" font-weight="600" fill="#1f2937">p99 (tail latency)</text>
+<line x1="80" y1="398.0" x2="735" y2="398.0" stroke="#d1d5db" stroke-width="1"/>
+<text x="70" y="402.0" font-size="11" fill="#6b7280" text-anchor="end">0.00 ms</text>
+<line x1="80" y1="338.8" x2="735" y2="338.8" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="342.8" font-size="11" fill="#6b7280" text-anchor="end">300 ms</text>
+<line x1="80" y1="279.6" x2="735" y2="279.6" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="283.6" font-size="11" fill="#6b7280" text-anchor="end">600 ms</text>
+<line x1="80" y1="220.4" x2="735" y2="220.4" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="224.4" font-size="11" fill="#6b7280" text-anchor="end">900 ms</text>
+<line x1="80" y1="161.2" x2="735" y2="161.2" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="165.2" font-size="11" fill="#6b7280" text-anchor="end">1,200 ms</text>
+<line x1="80" y1="102.0" x2="735" y2="102.0" stroke="#f3f4f6" stroke-width="1"/>
+<text x="70" y="106.0" font-size="11" fill="#6b7280" text-anchor="end">1,500 ms</text>
+<line x1="80.0" y1="102" x2="80.0" y2="398" stroke="#f9fafb" stroke-width="1"/>
+<line x1="80.0" y1="398" x2="80.0" y2="403" stroke="#9ca3af" stroke-width="1"/>
+<text x="80.0" y="418" font-size="11" font-weight="500" fill="#374151" text-anchor="middle">1</text>
+<line x1="211.0" y1="102" x2="211.0" y2="398" stroke="#f9fafb" stroke-width="1"/>
+<line x1="211.0" y1="398" x2="211.0" y2="403" stroke="#9ca3af" stroke-width="1"/>
+<text x="211.0" y="418" font-size="11" font-weight="500" fill="#374151" text-anchor="middle">10</text>
+<line x1="342.0" y1="102" x2="342.0" y2="398" stroke="#f9fafb" stroke-width="1"/>
+<line x1="342.0" y1="398" x2="342.0" y2="403" stroke="#9ca3af" stroke-width="1"/>
+<text x="342.0" y="418" font-size="11" font-weight="500" fill="#374151" text-anchor="middle">50</text>
+<line x1="473.0" y1="102" x2="473.0" y2="398" stroke="#f9fafb" stroke-width="1"/>
+<line x1="473.0" y1="398" x2="473.0" y2="403" stroke="#9ca3af" stroke-width="1"/>
+<text x="473.0" y="418" font-size="11" font-weight="500" fill="#374151" text-anchor="middle">100</text>
+<line x1="604.0" y1="102" x2="604.0" y2="398" stroke="#f9fafb" stroke-width="1"/>
+<line x1="604.0" y1="398" x2="604.0" y2="403" stroke="#9ca3af" stroke-width="1"/>
+<text x="604.0" y="418" font-size="11" font-weight="500" fill="#374151" text-anchor="middle">250</text>
+<line x1="735.0" y1="102" x2="735.0" y2="398" stroke="#f9fafb" stroke-width="1"/>
+<line x1="735.0" y1="398" x2="735.0" y2="403" stroke="#9ca3af" stroke-width="1"/>
+<text x="735.0" y="418" font-size="11" font-weight="500" fill="#374151" text-anchor="middle">500</text>
+<text x="407.5" y="446" font-size="12" font-weight="600" fill="#374151" text-anchor="middle">Parallel workflows in flight</text>
+<text x="18" y="250.0" font-size="12" font-weight="600" fill="#374151" text-anchor="middle" transform="rotate(-90 18 250.0)">Orchestration latency (ms)</text>
+<polyline fill="none" stroke="#16a34a" stroke-width="2.5" points="80.0,397.4 211.0,396.6 342.0,394.7 473.0,391.1 604.0,384.4 735.0,380.7"/>
+<circle cx="80.0" cy="397.4" r="4" fill="#ffffff" stroke="#16a34a" stroke-width="2.2"/>
+<circle cx="211.0" cy="396.6" r="4" fill="#ffffff" stroke="#16a34a" stroke-width="2.2"/>
+<circle cx="342.0" cy="394.7" r="4" fill="#ffffff" stroke="#16a34a" stroke-width="2.2"/>
+<circle cx="473.0" cy="391.1" r="4" fill="#ffffff" stroke="#16a34a" stroke-width="2.2"/>
+<circle cx="604.0" cy="384.4" r="4" fill="#ffffff" stroke="#16a34a" stroke-width="2.2"/>
+<circle cx="735.0" cy="380.7" r="4" fill="#ffffff" stroke="#16a34a" stroke-width="2.2"/>
+<polyline fill="none" stroke="#ea580c" stroke-width="2.5" points="80.0,397.3 211.0,394.8 342.0,377.2 473.0,355.5 604.0,300.9 735.0,194.8"/>
+<circle cx="80.0" cy="397.3" r="4" fill="#ffffff" stroke="#ea580c" stroke-width="2.2"/>
+<circle cx="211.0" cy="394.8" r="4" fill="#ffffff" stroke="#ea580c" stroke-width="2.2"/>
+<circle cx="342.0" cy="377.2" r="4" fill="#ffffff" stroke="#ea580c" stroke-width="2.2"/>
+<circle cx="473.0" cy="355.5" r="4" fill="#ffffff" stroke="#ea580c" stroke-width="2.2"/>
+<circle cx="604.0" cy="300.9" r="4" fill="#ffffff" stroke="#ea580c" stroke-width="2.2"/>
+<circle cx="735.0" cy="194.8" r="4" fill="#ffffff" stroke="#ea580c" stroke-width="2.2"/>
+<polyline fill="none" stroke="#dc2626" stroke-width="2.5" points="80.0,397.2 211.0,393.8 342.0,373.5 473.0,348.6 604.0,273.9 735.0,144.7"/>
+<circle cx="80.0" cy="397.2" r="4" fill="#ffffff" stroke="#dc2626" stroke-width="2.2"/>
+<circle cx="211.0" cy="393.8" r="4" fill="#ffffff" stroke="#dc2626" stroke-width="2.2"/>
+<circle cx="342.0" cy="373.5" r="4" fill="#ffffff" stroke="#dc2626" stroke-width="2.2"/>
+<circle cx="473.0" cy="348.6" r="4" fill="#ffffff" stroke="#dc2626" stroke-width="2.2"/>
+<circle cx="604.0" cy="273.9" r="4" fill="#ffffff" stroke="#dc2626" stroke-width="2.2"/>
+<circle cx="735.0" cy="144.7" r="4" fill="#ffffff" stroke="#dc2626" stroke-width="2.2"/>
+<line x1="740.0" y1="144.7" x2="742.0" y2="144.7" stroke="#dc2626" stroke-width="1" stroke-opacity="0.6"/>
+<text x="745.0" y="148.7" font-size="11.5" font-weight="600" fill="#dc2626">p99: 1,283 ms</text>
+<line x1="740.0" y1="194.8" x2="742.0" y2="194.8" stroke="#ea580c" stroke-width="1" stroke-opacity="0.6"/>
+<text x="745.0" y="198.8" font-size="11.5" font-weight="600" fill="#ea580c">p95: 1,030 ms</text>
+<line x1="740.0" y1="380.7" x2="742.0" y2="380.7" stroke="#16a34a" stroke-width="1" stroke-opacity="0.6"/>
+<text x="745.0" y="384.7" font-size="11.5" font-weight="600" fill="#16a34a">p50: 87.6 ms</text>
+</svg>

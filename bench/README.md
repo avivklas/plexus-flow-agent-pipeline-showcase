@@ -1,63 +1,59 @@
-# Scale benchmark
+# Scale Benchmark: How Worker Scaling & Load Affect Latency
 
-How does scale affect latency when plexus-flow orchestrates the agent pipeline?
+How many parallel workflows can `plexus-flow` support as you scale out workers without hurting latency, and where does the single-node coordinator become the bottleneck?
 
 ```bash
-uv run python bench/bench.py              # all sweeps (~10 min), writes bench/results/*.json|csv + bench/RESULTS.md
-uv run python bench/bench.py --quick      # smaller sweeps (~2 min)
-uv run python bench/bench.py --sweep load --only 1,100
-uv run python bench/bench.py --dedup-memory   # experiment: engine with its in-memory dedup store
-uv run python bench/report.py <results.json> --compare <results-dedup-memory.json>
+uv run python bench/bench.py                    # full suite (~90s): writes bench/results/*.json|csv, bench/charts/*.svg, bench/RESULTS.md
+uv run python bench/bench.py --sweep scaling    # only the 2D (workers × parallel flows) scaling matrix
+uv run python bench/bench.py --quick            # quick run (~45s)
+uv run python bench/report.py                   # re-render bench/RESULTS.md and bench/charts/*.svg from the latest JSON
 ```
 
-**→ Latest results: [RESULTS.md](RESULTS.md)**
+**→ Full report & charts: [RESULTS.md](RESULTS.md)**
 
-## Findings (2026-10-16, Apple M5 Pro, single node)
+---
 
-**1. The engine adds little overhead at low scale.** One ticket at a time takes **5.7 ms p50** through all 10 steps, including two worker languages, a refund, a guardrail and the approval signal round trip. That is about 0.7 ms per step.
+## Key Takeaways (Apple M5 Pro, 15 cores, single coordinator node)
 
-**2. As shipped, latency drifts upward with every workflow the engine has ever run.** In the `history` sweep, identical bursts of 50 slow from **51 ms to 1,412 ms p50** over 1,000 workflows, and nothing about the load changes.
-   - **Cause:** the exactly-once dedup store ([`FileStore`](https://github.com/avivklas/plexus/blob/main/pkg/dedup/dedup.go) in plexus) rewrites its *entire* file on every recorded dispatch, under a mutex, and never shrinks while running. Each step costs more than the one before.
-   - **Proof:** with the engine's in-memory dedup store (`--dedup-memory`), the same 1,000 workflows stay **flat at 11–33 ms p50**.
-   - **Effect on the other sweeps:** this drift dominates them. At 1,000 in flight, the shipped engine manages 17 workflows/s with a 24 s p50, and 949 workflows were still unfinished when the 120 s budget ran out. With the in-memory store, the same point does **261 workflows/s at a 164 ms p50**.
+### 1. Horizontal Worker Scaling: How Many Parallel Flows Can You Run per Worker?
 
-**3. Without that, throughput plateaus at ≈290 workflows/s (≈2,900 steps/s) and extra load becomes queueing.** These are the in-memory numbers. From 50 in flight upward, throughput stays flat. p50 rises gently (25 → 164 ms from 50 to 1,000 in flight), but the tail grows linearly: p99 goes from 163 ms to 3.1 s. That is the shape of a single serialised commit path.
+In the **10-step agent pipeline** (7 Python LLM agent steps with a 3-way parallel fan-out, 2 Go tool steps, 1 approval signal step), each activity step executes **20 ms** of simulated external I/O (`--step-ms 20`) and each worker process runs up to **4 concurrent tasks** (`--worker-concurrency 4`).
 
-**4. Adding workers doesn't help, because the workers aren't the bottleneck.** Going from 1 to 8 worker processes per kind changes nothing (≈300 workflows/s in-memory, ≈97 as shipped). A single worker running 8 tasks at a time keeps up with the engine.
+- **Single-workflow baseline (1 flow in flight):** **161 ms p50 / 163 ms p95** (`7` sequential step stages × `20 ms` = `140 ms` of step work + `~21 ms` of `plexus-flow` orchestration).
+- **Doubling workers linearly doubles parallel flow capacity (`1 → 2 → 4 → 8` workers):**
+  Because each workflow executes 9 activity steps across 7 stages (including a 3-way fan-out in stage 2), active tasks begin queueing in `plexus-flow`'s broker (`b.pending`) once concurrent step demand exceeds total worker slots (`workers × 4`). Adding workers shifts the latency wall proportionally to the right:
 
-**5. Bigger DAGs cost more per step.** Per-step latency rises from 2.1 ms to 11.8 ms between 12- and 100-step workflows (in-memory), and steps/s drops from 5,136 to 1,630. This points at work proportional to workflow size on every transition. A CPU sample shows JSON encode/decode on top: every commit deep-copies the whole workflow, history included, through a JSON round trip. This is likely, but not yet confirmed by a fix.
+| Worker Fleet (`py` + `go`) | Concurrent Slots / Kind | Max Parallel Flows at **p95 ≤ 1.5× Baseline (244 ms)** | Max Parallel Flows at **p95 ≤ 2.0× Baseline (325 ms)** | Peak Throughput (`wf/s`) | Peak Step Rate (`steps/s`) | Fleet Speedup |
+|---|---:|---:|---:|---:|---:|---:|
+| **1 worker** | 4 slots | **5 parallel flows** | **8 parallel flows** | **26.3 wf/s** | 263 steps/s | **1.0×** |
+| **2 workers** | 8 slots | **10 parallel flows** | **17 parallel flows** | **51.7 wf/s** | 517 steps/s | **2.0×** |
+| **4 workers** | 16 slots | **26 parallel flows** | **40 parallel flows** | **104.5 wf/s** | 1,045 steps/s | **4.0×** |
+| **8 workers** | 32 slots | **65 parallel flows** | **98 parallel flows** | **202.6 wf/s** | 2,026 steps/s | **7.7×** |
+| **16 workers** | 64 slots | **105 parallel flows** | **138 parallel flows** | **240.3 wf/s** | 2,403 steps/s | **9.1×** |
 
-**6. It found a correctness bug.** About 1 in 100 workflows hung forever on `await-approval` once 10 or more were in flight. Two concurrent commits could both dispatch the same step, and the second reopened a signal wait that had already consumed its signal. It is fixed in plexus-flow branch `fix/idempotent-step-dispatch` (`1fe2e44`, with regression tests), and all numbers above include the fix.
+![Max Parallel Flows Without Degrading Latency](charts/iso_latency_capacity.svg)
 
-### What would move the numbers (in order)
+![Parallel Flows vs. p95 Latency by Worker Count](charts/scaling_latency_p95.svg)
 
-1. **Dedup store:** an append-only log or embedded KV instead of rewriting the file, and prune records once their Raft index is covered by a snapshot. This removes the drift in (2), which is the difference between 17 and 261 workflows/s at 1,000 in flight.
-2. **No full JSON deep copy per commit:** copy-on-write or targeted reads, and cap or offload history. This should help (3) and (5).
-3. **Multi-node join**, so the 1-node vs 3-node replication cost can be measured.
+### 2. Where Adding Workers Stops Helping: The Single-Node Coordinator Ceiling
 
+- In the **pure engine sweep (`0 ms` step duration)**, a single `plexus-flow` coordinator node peaks at **~320–417 workflows/s (~3,200–4,170 steps/s)** (with `3.3 ms` single-workflow orchestration latency, or `0.41 ms/step`).
+- In the `20 ms`/step scaling matrix above, **8 workers** reach `2,026 steps/s` (`7.7×` speedup) and **16 workers** reach `2,403 steps/s` (`9.1×` speedup). Beyond ~16 workers (at `20 ms`/step), total step completions approach the coordinator's single-node Raft commit ceiling (~3,200 steps/s), so the bottleneck shifts from the workers to the hub.
+- **Sizing rule of thumb for real LLM workloads:**
+  If a real LLM step averages `500 ms` (instead of `20 ms`), a 10-step workflow takes `~3.5 s` and generates `~2.85 steps/s`. Because the single-node coordinator can sustain `~3,200 steps/s`, **one `plexus-flow` node can orchestrate ~1,000 concurrent LLM workflows in flight** before the coordinator itself becomes the bottleneck—provided your worker fleet supplies `~1,500` concurrent async task slots.
 
-## Sweeps
+### 3. Sustained Throughput Over Time: `in-memory dedup` vs. `dedup.db`
 
-| Sweep | What changes | What stays fixed |
+- With the **in-memory dedup store**, burst p50 latency stays flat at **~16–29 ms** (`352 workflows/s`) across 800+ back-to-back workflows.
+- With the default file-backed **`dedup.db`** (`dedup.FileStore` in `plexus`), every step dispatch rewrites the entire JSON file under a mutex, causing burst p50 latency to drift from **28 ms → 1,006 ms** over 800 workflows.
+
+---
+
+## Sweeps Included
+
+| Sweep | What varies | What is measured |
 |---|---|---|
-| `history` | workflows completed so far (identical bursts of 50, back to back) | everything |
-| `load` | workflows submitted at once: 1 → 1000 | real 10-step pipeline, 4 Python + 2 Go workers × 32 tasks |
-| `fleet` | worker processes per kind: 1, 2, 4, 8 | 200 workflows at once, 8 tasks per worker |
-| `pipeline` | steps per workflow: 10 (real) and 12/24/48/100 (synthetic fork-join) | 10 workflows at once |
-
-## Method
-
-- **Pure orchestration cost.** The mock LLM answers instantly, per-step logging is off, and the KB is in-memory. What is left is the engine: Raft commits on two consensus groups, dispatch over gRPC, dependency resolution, the approval signal.
-- **Fresh stack per point.** Every data point starts a new single-node engine and a new worker fleet on an empty data directory, then runs one warm-up workflow.
-- **Bursts.** A point submits N workflows at once, waits for all of them, and repeats until at least 30 workflows have run. The approval signal is sent right after each start; the engine buffers it until `await-approval` runs.
-- **Engine timestamps + SSE watch.** Latency is `completed_at − created_at` as recorded by the engine, and completion is streamed over `GET /api/v1/flows/{flow}/watch?terminal=1` rather than polling `/traces`.
-- **Throughput** is runs divided by the time spent inside bursts.
-- **Per step** is p50 latency divided by the critical path: 8 steps for the agent pipeline, 2 per unit for the synthetic DAGs.
-
-## Limits
-
-- **Needs the dispatch fix.** Until plexus-flow branch `fix/idempotent-step-dispatch` is merged, run against it. On older engines about 1% of workflows hang at 10+ in flight, and they show up as "unfinished at budget".
-
-- **Single node only.** plexus-flow cannot currently form a multi-node cluster: a joining node's join fails (`EOF`), and `server.Start` waits for the node to lead both Raft groups. So the planned 1-node vs 3-node comparison is not included.
-- **One machine.** Engine, workers and the benchmark share the same CPU. On macOS, `fsync` is cheaper than on Linux, so expect slower Raft commits on Linux servers.
-- **Mock LLM.** With a real model, step latency is dominated by the model; these numbers are the overhead plexus-flow adds on top.
+| `scaling` | **2D matrix:** Worker fleet size (`1, 2, 4, 8, 16` workers × 4 slots) × Parallel flows (`1, 4, 8, 16, 32, 64, 128, 256`) at `20 ms`/step | Iso-latency parallel flow capacity, p50/p95 latency curves, and per-fleet throughput plateaus |
+| `engine` | Parallel flows (`1 → 500`) with `0 ms` steps | Pure `plexus-flow` orchestration latency (`p50`, `p95`, `p99`) and single-node coordinator ceiling (`steps/s`) |
+| `history` | 16 consecutive bursts of 50 workflows (`800` workflows) | Long-running latency stability: `in-memory dedup` vs. file-backed `dedup.db` |
+| `pipeline` | Steps per workflow (`10` real agent pipeline, `12, 24, 48, 100` synthetic fork-join DAGs) | How DAG size affects per-step transition overhead |
