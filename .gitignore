@@ -1,0 +1,18 @@
+# Binaries & build artifacts
+bin/
+
+# Runtime state: Raft data, logs, pid files, LLM call ledgers
+data/
+*.log
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# IDE & OS
+.DS_Store
+.idea/
+.vscode/

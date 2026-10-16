@@ -1,0 +1,30 @@
+{
+  "CUST-4417": {
+    "name": "Maya Cohen", "tier": "gold", "lifetime_value": 2140.00, "refunds_90d": 0,
+    "orders": {
+      "ORD-55120": { "item": "Barista Pro espresso machine", "price": 189.00, "shipping_fee": 9.99,
+                     "status": "delivered", "delivered_days_late": 0 }
+    }
+  },
+  "CUST-2093": {
+    "name": "Daniel Levi", "tier": "standard", "lifetime_value": 310.50, "refunds_90d": 0,
+    "orders": {
+      "ORD-61877": { "item": "Trail running shoes", "price": 129.00, "shipping_fee": 12.99,
+                     "status": "in_transit", "delivered_days_late": 8 }
+    }
+  },
+  "CUST-7781": {
+    "name": "Noa Peretz", "tier": "platinum", "lifetime_value": 5890.00, "refunds_90d": 0,
+    "orders": {
+      "ORD-70422": { "item": "Annual Pro subscription", "price": 119.00, "shipping_fee": 0,
+                     "status": "active", "delivered_days_late": 0, "duplicate_charge": 119.00 }
+    }
+  },
+  "CUST-3355": {
+    "name": "Alex Mor", "tier": "standard", "lifetime_value": 1720.00, "refunds_90d": 4,
+    "orders": {
+      "ORD-80931": { "item": "Noise-cancelling headphones", "price": 179.00, "shipping_fee": 0,
+                     "status": "delivered", "delivered_days_late": 0 }
+    }
+  }
+}

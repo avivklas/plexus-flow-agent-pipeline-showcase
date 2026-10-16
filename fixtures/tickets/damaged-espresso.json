@@ -1,0 +1,8 @@
+{
+  "ticket_id": "TCK-1001",
+  "customer_id": "CUST-4417",
+  "order_id": "ORD-55120",
+  "channel": "email",
+  "subject": "Espresso machine arrived cracked",
+  "body": "Hi, my Barista Pro espresso machine arrived today and the water tank is cracked. It leaks all over the counter. I was really looking forward to this. What can you do?"
+}

@@ -1,0 +1,8 @@
+{
+  "ticket_id": "TCK-1004",
+  "customer_id": "CUST-3355",
+  "order_id": "ORD-80931",
+  "channel": "email",
+  "subject": "Headphones broken on arrival",
+  "body": "The headphones I ordered arrived broken, the headband is cracked. Please refund me."
+}
