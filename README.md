@@ -12,7 +12,7 @@
 This showcase is a **support ticket resolver**: seven LLM agents plus two side-effecting tools. A refund is issued, then a guardrail or a human can still veto it, and plexus-flow reverses the refund automatically. It runs offline with a deterministic mock model, or against any OpenAI-compatible endpoint.
 
 ```bash
-./run_showcase.sh                 # all 6 scenarios, ~60s, zero API keys
+./run_showcase.sh                 # all 6 scenarios in a few seconds, zero API keys
 ./run_showcase.sh --interactive   # you are the human reviewer
 ```
 

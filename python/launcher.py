@@ -63,7 +63,7 @@ SCENARIOS: dict[str, dict[str, Any]] = {
     "crash-resume": {
         "title": "CRASH & RESUME: agent worker killed mid-run",
         "ticket": "damaged-espresso.json",
-        "chaos": {"slow_ms": {"draft-reply": 4000}},
+        "chaos": {"slow_ms": {"draft-reply": 2000}},
         "decision": {"approved": True, "reviewer": "dana@support", "note": "Approved"},
         "crash_on": "draft-reply",
         "story": "The Python worker is SIGKILLed while drafting. On restart only the in-flight step runs again. Finished LLM calls are never repeated.",
@@ -71,8 +71,8 @@ SCENARIOS: dict[str, dict[str, Any]] = {
     "timeout": {
         "title": "NOBODY ANSWERS: approval times out",
         "ticket": "damaged-espresso.json",
-        "approval_timeout": "6s",
-        "story": "No reviewer responds within the approval window (shortened to 6s for the demo). SIGNAL_TIMEOUT rolls the refund back.",
+        "approval_timeout": "3s",
+        "story": "No reviewer responds within the approval window (shortened to 3s for the demo). SIGNAL_TIMEOUT rolls the refund back.",
     },
 }
 ALL = ["happy", "flaky-llm", "guardrail", "human-reject", "crash-resume", "timeout"]
@@ -155,10 +155,10 @@ class Runner:
             # Chaos monkey: kill the agent worker while the target step is in flight.
             target = sc.get("crash_on")
             if target and not killed and steps.get(target, {}).get("status") == "RUNNING":
-                time.sleep(1.0)
+                time.sleep(0.3)
                 killed, killed_at = True, time.time()
                 self._kill_agent_worker()
-            if killed and not restarted and time.time() - killed_at > 2.5:
+            if killed and not restarted and time.time() - killed_at > 0.5:
                 restarted = True
                 self._restart_agent_worker()
 
@@ -169,7 +169,7 @@ class Runner:
 
             if wf.get("status") in TERMINAL:
                 break
-            time.sleep(0.15)
+            time.sleep(0.05)
 
         return self._summary(name, wf_id, wf)
 
@@ -197,7 +197,6 @@ class Runner:
             print(f"{YELLOW}└─ (no reviewer is going to answer this one…){RESET}\n")
             return
         else:
-            time.sleep(1.5)
             print(f"{YELLOW}└─{RESET}")
 
         verdict = f"{GREEN}APPROVED{RESET}" if decision["approved"] else f"{RED}REJECTED{RESET}"
@@ -232,6 +231,14 @@ class Runner:
         if st.get("error") and status in ("FAILED", "RUNNING"):
             print(f"    {RED}└─ {st.get('error_code') or 'ERROR'}: {st['error']}{RESET}")
 
+    @staticmethod
+    def _elapsed(wf: dict[str, Any]) -> float:
+        from datetime import datetime
+        def ts(v: str) -> float:
+            return datetime.fromisoformat(re.sub(r"(\.\d{6})\d*", r"\1", v.replace("Z", "+00:00"))).timestamp()
+        end = wf.get("completed_at") or wf.get("updated_at")
+        return ts(end) - ts(wf["created_at"]) if end and wf.get("created_at") else 0.0
+
     def _summary(self, name: str, wf_id: str, wf: dict[str, Any]) -> str:
         status = wf.get("status", "UNKNOWN")
         steps = wf.get("steps", {})
@@ -257,7 +264,7 @@ class Runner:
                 pids = sorted({c["pid"] for c in rows})
                 mark = f"{YELLOW}← in flight during the crash, re-run{RESET}" if len(rows) > 1 else f"{GREEN}✓ once{RESET}"
                 print(f"    {step_name:<16} {len(rows)} call(s)  pids={pids}  {mark}")
-        print(f"  {DIM}trace: {self.api}/  (workflow {wf_id}){RESET}")
+        print(f"  {DIM}took {self._elapsed(wf):.2f}s end to end · trace: {self.api}/  (workflow {wf_id}){RESET}")
         return status
 
 

@@ -1,7 +1,7 @@
 """The one function every agent calls: ``complete()``.
 
 Backends (``PLEXUS_LLM``):
-  * ``mock`` (default): deterministic, offline, zero API keys. Each agent passes
+  * ``mock`` (default): deterministic, instant, offline, zero API keys. Each agent passes
     a ``mock`` callable that computes what a well-behaved model would answer.
   * ``openai``: any OpenAI-compatible ``/chat/completions`` endpoint (OpenAI,
     Ollama, vLLM, LM Studio, ...). Configure ``OPENAI_BASE_URL``,
@@ -15,7 +15,6 @@ retries the step according to ``retries`` in flow.json.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import time
@@ -29,7 +28,6 @@ BACKEND = os.environ.get("PLEXUS_LLM", "mock").lower()
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-MOCK_LATENCY_SCALE = float(os.environ.get("MOCK_LATENCY_SCALE", "1.0"))
 LEDGER_DIR = Path(os.environ.get("LLM_LEDGER_DIR", Path(__file__).resolve().parent.parent / "data" / "llm_calls"))
 
 DIM, PURPLE, RED, RESET = "\033[2m", "\033[35m", "\033[31m", "\033[0m"
@@ -55,7 +53,6 @@ async def complete(
 
     started = time.monotonic()
     if BACKEND == "mock":
-        await asyncio.sleep(_mock_latency(ctx.step_name))
         out = mock()
     elif BACKEND == "openai":
         try:
@@ -66,7 +63,7 @@ async def complete(
     else:
         raise PermanentFailure(f"unknown PLEXUS_LLM backend {BACKEND!r}", code="LLM_CONFIG")
 
-    print(f"{DIM}    🧠 {ctx.step_name}: llm call ({BACKEND}, {time.monotonic() - started:.2f}s, attempt {ctx.attempt}){RESET}", flush=True)
+    print(f"{DIM}    🧠 {ctx.step_name}: llm call ({BACKEND}, {(time.monotonic() - started) * 1000:.0f}ms, attempt {ctx.attempt}){RESET}", flush=True)
     return out
 
 
@@ -104,15 +101,13 @@ async def _inject_chaos(ctx: TaskContext, chaos: dict[str, Any]) -> None:
     if ctx.attempt <= failures:
         print(f"{RED}    ⚠ {ctx.step_name}: provider returned 429 Too Many Requests (attempt {ctx.attempt}){RESET}", flush=True)
         raise ActivityFailure("429 Too Many Requests: rate limit exceeded", code="RATE_LIMITED")
+    # A slow model response, used to keep a step in flight long enough to crash the worker.
+    # Only the first delivery is slow; the redelivered task after the crash runs at full speed.
     slow_ms = chaos.get("slow_ms", {}).get(ctx.step_name, 0)
-    if slow_ms:
+    first_delivery = sum(1 for c in read_ledger(ctx.workflow_id) if c["step"] == ctx.step_name) == 1
+    if slow_ms and first_delivery:
         print(f"{PURPLE}    ⏳ {ctx.step_name}: slow model response ({slow_ms} ms){RESET}", flush=True)
         await asyncio.sleep(slow_ms / 1000)
-
-
-def _mock_latency(step: str) -> float:
-    jitter = int(hashlib.sha256(step.encode()).hexdigest(), 16) % 500
-    return (0.35 + jitter / 1000) * MOCK_LATENCY_SCALE
 
 
 # --------------------------------------------------------------------------
