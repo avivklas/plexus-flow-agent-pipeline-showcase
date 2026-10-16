@@ -13,7 +13,7 @@ the cost of orchestration itself: Raft commits, dispatch to gRPC workers,
 dependency resolution, the approval signal.
 
 Latency is taken from the engine's own timestamps (workflow created -> completed),
-so how often the benchmark polls for completion does not affect it.
+and completion is streamed from the engine's SSE watch endpoint rather than polled.
 
     uv run python bench/bench.py                       # all sweeps
     uv run python bench/bench.py --sweep load --quick  # one quick sweep
@@ -196,7 +196,7 @@ def _ts(v: str) -> float:
     return datetime.fromisoformat(f"{head}.{frac}+00:00").timestamp()
 
 
-async def drive(case: Case, budget_s: float, poll_s: float | None = None, rounds: int | None = None) -> Result:
+async def drive(case: Case, budget_s: float, rounds: int | None = None) -> Result:
     if case.workload == "agent":
         definition = load_definition()
         ticket = json.loads((ROOT / "fixtures" / "tickets" / "damaged-espresso.json").read_text())
@@ -215,48 +215,61 @@ async def drive(case: Case, budget_s: float, poll_s: float | None = None, rounds
             if case.workload == "agent":  # signals sent early are buffered until await-approval runs
                 (await client.post(f"/api/v1/workflows/{wf_id}/signal", json=approval)).raise_for_status()
 
-        # Warm-up: one workflow end to end, so every worker is connected and every code path is hot.
-        await start("warmup")
-        deadline = time.time() + 30
-        while (await client.get(f"/api/v1/workflows/warmup")).json().get("status") not in TERMINAL:
-            if time.time() > deadline:
-                raise RuntimeError("warm-up workflow did not finish; check bench/data/*/workers.log")
-            await asyncio.sleep(0.02)
-
-        # Bursts: submit `concurrency` workflows at once, wait for all of them, repeat.
-        # Completion is checked slowly (the traces endpoint copies every workflow under the
-        # store's read lock, so polling it hard would slow the engine down). Latency comes from
-        # engine timestamps, so the polling interval does not change the numbers.
-        rounds = rounds or case.rounds or max(3, math.ceil(30 / case.concurrency))
-        poll = poll_s or (0.05 if case.concurrency <= 10 else 0.25)
         summaries: dict[str, dict[str, Any]] = {}
         spans: list[float] = []
         round_p50: list[float] = []
         stuck: list[str] = []
-        t0 = time.time()
-        for rnd in range(rounds):
-            ids = [f"bench-{rnd}-{i}" for i in range(case.concurrency)]
-            await asyncio.gather(*(start(i) for i in ids))
-            pending = set(ids)
-            while pending and time.time() - t0 < budget_s:
-                await asyncio.sleep(poll)
-                for s in (await client.get(f"/api/v1/flows/{flow}/traces")).json():
+
+        # Stream terminal workflow summaries as server-sent events instead of polling /traces.
+        async with client.stream("GET", f"/api/v1/flows/{flow}/watch?terminal=1", timeout=None) as watch:
+            watch.raise_for_status()
+            lines = watch.aiter_lines()
+
+            async def collect(pending: set[str], deadline: float) -> None:
+                while pending:
+                    remaining = deadline - time.time()
+                    if remaining <= 0:
+                        return
+                    try:
+                        line = await asyncio.wait_for(anext(lines), timeout=remaining)
+                    except (TimeoutError, StopAsyncIteration):
+                        return
+                    if not line.startswith("data:"):
+                        continue
+                    s = json.loads(line[5:])
                     if s["workflow_id"] in pending and s["status"] in TERMINAL:
                         summaries[s["workflow_id"]] = s
                         pending.discard(s["workflow_id"])
-            done = [summaries[i] for i in ids if i in summaries]
-            if done:
-                round_lat = sorted((_ts(d["ended_at"]) - _ts(d["started_at"])) * 1000 for d in done)
-                round_p50.append(round(statistics.median(round_lat), 1))
-                spans.append(max(_ts(d["ended_at"]) for d in done) - min(_ts(d["started_at"]) for d in done))
-            if pending:
-                stuck = sorted(pending)
-                wf = (await client.get(f"/api/v1/workflows/{stuck[0]}")).json()
-                states = {n: (st["status"], st.get("attempt"), st.get("error", "")) for n, st in wf["steps"].items()
-                          if st["status"] != "COMPLETED"}
-                print(f"{RED}  {len(stuck)} workflow(s) unfinished when the time budget ran out, "
-                      f"e.g. {stuck[0]}: {wf.get('status')} {states}{RESET}")
-                break
+
+            # Warm-up: one workflow end to end, so every worker is connected and every code path is hot.
+            warm = {"warmup"}
+            await start("warmup")
+            await collect(warm, time.time() + 30)
+            if warm:
+                raise RuntimeError("warm-up workflow did not finish; check bench/data/*/workers.log")
+            summaries.clear()
+
+            # Bursts: submit `concurrency` workflows at once, wait for all of them on the watch stream, repeat.
+            rounds = rounds or case.rounds or max(3, math.ceil(30 / case.concurrency))
+            t0 = time.time()
+            for rnd in range(rounds):
+                ids = [f"bench-{rnd}-{i}" for i in range(case.concurrency)]
+                pending = set(ids)
+                await asyncio.gather(*(start(i) for i in ids))
+                await collect(pending, t0 + budget_s)
+                done = [summaries[i] for i in ids if i in summaries]
+                if done:
+                    round_lat = sorted((_ts(d["ended_at"]) - _ts(d["started_at"])) * 1000 for d in done)
+                    round_p50.append(round(statistics.median(round_lat), 1))
+                    spans.append(max(_ts(d["ended_at"]) for d in done) - min(_ts(d["started_at"]) for d in done))
+                if pending:
+                    stuck = sorted(pending)
+                    wf = (await client.get(f"/api/v1/workflows/{stuck[0]}")).json()
+                    states = {n: (st["status"], st.get("attempt"), st.get("error", "")) for n, st in wf["steps"].items()
+                              if st["status"] != "COMPLETED"}
+                    print(f"{RED}  {len(stuck)} workflow(s) unfinished when the time budget ran out, "
+                          f"e.g. {stuck[0]}: {wf.get('status')} {states}{RESET}")
+                    break
 
     res = Result(case=case, wall_s=time.time() - t0, round_p50_ms=round_p50)
     rows = list(summaries.values())
@@ -355,7 +368,6 @@ def main() -> None:
                         help="experiment: run the engine with its in-memory dedup store instead of dedup.db")
     parser.add_argument("--quick", action="store_true", help="smaller sweeps (~1 minute)")
     parser.add_argument("--budget", type=float, default=120, help="max seconds per data point")
-    parser.add_argument("--poll", type=float, default=None, help="override the completion polling interval (s)")
     parser.add_argument("--rounds", type=int, default=None, help="override bursts per data point")
     parser.add_argument("--only", default="", help="comma-separated x values to run, e.g. --only 250")
     parser.add_argument("--no-report", action="store_true", help="skip writing bench/RESULTS.md")
@@ -377,7 +389,7 @@ def main() -> None:
             if args.only and str(case.x) not in args.only.split(","):
                 continue
             with Stack(case, BENCH / "data" / f"{sweep}-{case.workload}-{case.x}"):
-                r = asyncio.run(drive(case, args.budget, args.poll, args.rounds))
+                r = asyncio.run(drive(case, args.budget, args.rounds))
             print_row(r)
             if args.rounds or sweep == "history":
                 print(f"{DIM}{'':>12} p50 per burst: {r.round_p50_ms}{RESET}")

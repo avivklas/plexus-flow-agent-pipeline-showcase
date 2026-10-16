@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from plexus_flow import watch_workflow
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import llm  # noqa: E402  (for the call ledger)
@@ -137,13 +138,12 @@ class Runner:
         print(f"{CYAN}[helpdesk]{RESET} ticket {ticket['ticket_id']} submitted as workflow {BOLD}{wf_id}{RESET}")
 
         seen: dict[str, tuple[str, int]] = {}
-        signaled = killed = restarted = False
-        killed_at = 0.0
-        deadline = time.time() + 300
+        signaled = killed = False
         wf: dict[str, Any] = {}
 
-        while time.time() < deadline:
-            wf = self.http.get(f"{self.api}/api/v1/workflows/{wf_id}").json()
+        # No polling: plexus-flow pushes the workflow's state on every change
+        # (server-sent events), the same way it pushes tasks to workers.
+        for wf in watch_workflow(self.api, wf_id):
             steps = wf.get("steps", {})
             for step_name in wf.get("step_order", []):
                 st = steps[step_name]
@@ -156,20 +156,15 @@ class Runner:
             target = sc.get("crash_on")
             if target and not killed and steps.get(target, {}).get("status") == "RUNNING":
                 time.sleep(0.3)
-                killed, killed_at = True, time.time()
+                killed = True
                 self._kill_agent_worker()
-            if killed and not restarted and time.time() - killed_at > 0.5:
-                restarted = True
+                time.sleep(0.5)  # nothing changes while no worker serves the step
                 self._restart_agent_worker()
 
             # Human reviewer: answer the approval signal.
             if not signaled and steps.get("await-approval", {}).get("status") == "RUNNING":
                 signaled = True
                 self._review(wf_id, wf, sc.get("decision"))
-
-            if wf.get("status") in TERMINAL:
-                break
-            time.sleep(0.05)
 
         return self._summary(name, wf_id, wf)
 

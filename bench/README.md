@@ -50,7 +50,7 @@ uv run python bench/report.py <results.json> --compare <results-dedup-memory.jso
 - **Pure orchestration cost.** The mock LLM answers instantly, per-step logging is off, and the KB is in-memory. What is left is the engine: Raft commits on two consensus groups, dispatch over gRPC, dependency resolution, the approval signal.
 - **Fresh stack per point.** Every data point starts a new single-node engine and a new worker fleet on an empty data directory, then runs one warm-up workflow.
 - **Bursts.** A point submits N workflows at once, waits for all of them, and repeats until at least 30 workflows have run. The approval signal is sent right after each start; the engine buffers it until `await-approval` runs.
-- **Engine timestamps.** Latency is `completed_at − created_at` as recorded by the engine, so polling for completion does not change the numbers. Polling is also infrequent at high load, because the endpoint copies every workflow under the store's read lock. Measured: 0.25s vs 2s polling at 250 in flight changed p50 by 2%.
+- **Engine timestamps + SSE watch.** Latency is `completed_at − created_at` as recorded by the engine, and completion is streamed over `GET /api/v1/flows/{flow}/watch?terminal=1` rather than polling `/traces`.
 - **Throughput** is runs divided by the time spent inside bursts.
 - **Per step** is p50 latency divided by the critical path: 8 steps for the agent pipeline, 2 per unit for the synthetic DAGs.
 
