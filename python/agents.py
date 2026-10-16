@@ -46,7 +46,12 @@ def agent(name: str):
     return register
 
 
+QUIET = os.environ.get("SHOWCASE_QUIET") == "1"  # the benchmark silences per-step logs
+
+
 def say(agent: str, ticket: dict[str, Any], msg: str, color: str = GREEN) -> None:
+    if QUIET:
+        return
     print(f"{color}[{agent}]{RESET} {ticket.get('ticket_id', '?')}: {msg}", flush=True)
 
 
@@ -296,11 +301,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Agent pipeline: Python agent worker")
     parser.add_argument("--grpc-addr", default="127.0.0.1:9090")
     parser.add_argument("--pidfile", default=str(ROOT / "data" / "agents.pid"))
+    parser.add_argument("--worker-id", default="py-agent-worker", help="unique per worker process")
+    parser.add_argument("--max-concurrency", type=int, default=8, help="tasks run in parallel by this process")
     args = parser.parse_args()
 
     Path(args.pidfile).parent.mkdir(parents=True, exist_ok=True)
     Path(args.pidfile).write_text(str(os.getpid()))
-    worker = Worker(args.grpc_addr, worker_id="py-agent-worker", max_concurrency=8)
+    worker = Worker(args.grpc_addr, worker_id=args.worker_id, max_concurrency=args.max_concurrency)
     for name, fn in AGENTS.items():
         worker.register(name, fn)
 

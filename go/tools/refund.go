@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -28,7 +29,13 @@ const (
 	bold   = "\033[1m"
 )
 
+// quiet silences per-step logs (set by the benchmark).
+var quiet = os.Getenv("SHOWCASE_QUIET") == "1"
+
 func logf(color, tag, format string, args ...any) {
+	if quiet {
+		return
+	}
 	fmt.Printf("%s %s[%s]%s %s\n", time.Now().Format("15:04:05"), color, tag, reset, fmt.Sprintf(format, args...))
 }
 

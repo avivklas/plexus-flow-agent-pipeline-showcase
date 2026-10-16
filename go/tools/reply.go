@@ -71,6 +71,9 @@ func SendReply(ctx context.Context, input json.RawMessage) (json.RawMessage, err
 	outbox.sent[wf] = s
 
 	logf(green, "Helpdesk", "%s: ✉️  reply %s sent (approved by %s)", t.TicketID, s.MessageID, approval.Reviewer)
+	if quiet {
+		return json.Marshal(s)
+	}
 	fmt.Printf("%s    ┌─ Subject: %s%s\n", cyan, draft.Subject, reset)
 	for _, line := range strings.Split(strings.TrimSpace(draft.Body), "\n") {
 		fmt.Printf("%s    │ %s%s\n", cyan, line, reset)

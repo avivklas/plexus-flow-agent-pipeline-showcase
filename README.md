@@ -245,7 +245,7 @@ The chaos scenarios (429s, the off-policy draft, the slow model) are injected th
 ### Run the pieces by hand
 
 ```bash
-(cd ../plexus-flow && go build -o ../agent-pipeline-showcase/bin/plexus-flow ./cmd/plexus-flow)
+go build -o bin/plexus-flow github.com/avivklas/plexus-flow/cmd/plexus-flow
 bin/plexus-flow --http-addr 127.0.0.1:8080 --grpc-addr 127.0.0.1:9090 --data-dir data/flow
 go run ./go --grpc-addr 127.0.0.1:9090                     # Go tool worker
 uv run python python/agents.py --grpc-addr 127.0.0.1:9090  # Python agent worker
@@ -261,6 +261,14 @@ curl -X POST http://127.0.0.1:8080/api/v1/workflows/<workflow-id>/signal \
 
 ---
 
+## How does it scale?
+
+[`bench/`](bench/) measures how latency responds to load, worker fleet size, pipeline size and engine uptime, using the real pipeline with the mock model so only orchestration cost is counted. Headline: **5.7 ms p50 for the whole 10-step pipeline** at low load. At high load the engine, not the workers, sets the limit: throughput plateaus at ≈290 workflows/s once a known dedup-store issue is taken out of the picture. See [bench/README.md](bench/README.md) for the findings and [bench/RESULTS.md](bench/RESULTS.md) for charts.
+
+```bash
+uv run python bench/bench.py --quick
+```
+
 ## Repository layout
 
 ```
@@ -274,6 +282,7 @@ go/tools/reply.go      send-reply / retract-reply
 kb/*.md                support policy articles (indexed into plexus-search)
 fixtures/              customers and tickets
 run_showcase.sh        build, boot, seed, run
+bench/                 scale benchmark: driver, report generator, results
 ```
 
 ## Honest limits

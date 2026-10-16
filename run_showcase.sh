@@ -16,7 +16,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLEXUS_FLOW_DIR="${PLEXUS_FLOW_DIR:-${ROOT}/../plexus-flow}"
 PLEXUS_SEARCH_DIR="${PLEXUS_SEARCH_DIR:-${ROOT}/../plexus-search}"
-DATA="${ROOT}/data"
+DATA="${DATA_DIR:-${ROOT}/data}"   # wiped on every run
 BIN="${ROOT}/bin"
 
 HTTP_ADDR="${HTTP_ADDR:-127.0.0.1:8080}"
@@ -70,7 +70,8 @@ done
 # --- build -------------------------------------------------------------------
 mkdir -p "${BIN}"
 step "building plexus-flow from ${PLEXUS_FLOW_DIR}"
-(cd "${PLEXUS_FLOW_DIR}" && go build -o "${BIN}/plexus-flow" ./cmd/plexus-flow)
+# built through this module: go.mod replaces plexus-flow and plexus with the sibling checkouts
+(cd "${ROOT}" && go build -o "${BIN}/plexus-flow" github.com/avivklas/plexus-flow/cmd/plexus-flow)
 step "building Go tool worker"
 (cd "${ROOT}" && go build -o "${BIN}/tool-worker" ./go)
 
@@ -101,6 +102,7 @@ if [ -n "${KB_URL}" ]; then
     (cd "${ROOT}" && uv run python python/kb.py seed --url "${KB_URL}")
 fi
 export KB_URL
+export LLM_LEDGER_DIR="${DATA}/llm_calls"
 export PYTHONUNBUFFERED=1
 
 step "starting plexus-flow (dashboard http://${HTTP_ADDR}, workers gRPC ${GRPC_ADDR})"

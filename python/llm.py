@@ -28,6 +28,8 @@ BACKEND = os.environ.get("PLEXUS_LLM", "mock").lower()
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+QUIET = os.environ.get("SHOWCASE_QUIET") == "1"
+LEDGER_ENABLED = os.environ.get("LLM_LEDGER", "1") != "0"  # the benchmark turns it off
 LEDGER_DIR = Path(os.environ.get("LLM_LEDGER_DIR", Path(__file__).resolve().parent.parent / "data" / "llm_calls"))
 
 DIM, PURPLE, RED, RESET = "\033[2m", "\033[35m", "\033[31m", "\033[0m"
@@ -63,7 +65,8 @@ async def complete(
     else:
         raise PermanentFailure(f"unknown PLEXUS_LLM backend {BACKEND!r}", code="LLM_CONFIG")
 
-    print(f"{DIM}    🧠 {ctx.step_name}: llm call ({BACKEND}, {(time.monotonic() - started) * 1000:.0f}ms, attempt {ctx.attempt}){RESET}", flush=True)
+    if not QUIET:
+        print(f"{DIM}    🧠 {ctx.step_name}: llm call ({BACKEND}, {(time.monotonic() - started) * 1000:.0f}ms, attempt {ctx.attempt}){RESET}", flush=True)
     return out
 
 
@@ -79,6 +82,8 @@ def require(out: dict[str, Any], *keys: str) -> None:
 # --------------------------------------------------------------------------
 
 def _record_call(ctx: TaskContext) -> None:
+    if not LEDGER_ENABLED:
+        return
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
     entry = {"step": ctx.step_name, "attempt": ctx.attempt, "task_id": ctx.task_id, "pid": os.getpid(), "ts": time.time()}
     with open(LEDGER_DIR / f"{ctx.workflow_id}.jsonl", "a") as f:

@@ -23,9 +23,10 @@ import (
 func main() {
 	grpcAddr := flag.String("grpc-addr", "127.0.0.1:9090", "plexus-flow gRPC address")
 	workerID := flag.String("worker-id", "go-tool-worker", "unique worker ID")
+	maxConcurrency := flag.Int("max-concurrency", 8, "tasks run in parallel by this process")
 	flag.Parse()
 
-	w := workerclient.New(*grpcAddr, workerclient.Options{WorkerID: *workerID, MaxConcurrency: 8})
+	w := workerclient.New(*grpcAddr, workerclient.Options{WorkerID: *workerID, MaxConcurrency: *maxConcurrency})
 	reg := w.Registry()
 	reg.Register("issue-refund", tools.IssueRefund)
 	reg.Register("reverse-refund", tools.ReverseRefund)
