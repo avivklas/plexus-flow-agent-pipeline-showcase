@@ -104,6 +104,10 @@ def load_definition(approval_timeout: str | None = None) -> dict[str, Any]:
         for key in ("timeout", "delay"):
             if key in step:
                 step[key] = to_ns(step[key])
+        if rp := step.get("retry_policy"):
+            for key in ("initial_interval", "max_interval"):
+                if key in rp:
+                    rp[key] = to_ns(rp[key])
     return definition
 
 
@@ -249,7 +253,9 @@ class Runner:
         else:
             print(f"{RED}{BOLD}✖ {status}{RESET}: {wf.get('error')}")
 
-        if SCENARIOS[name].get("crash_on"):
+        if target := SCENARIOS[name].get("crash_on"):
+            if prog := steps.get(target, {}).get("progress"):
+                print(f"  {CYAN}♻️  Heartbeat checkpoint preserved across worker crash ({target}):{RESET} {prog}")
             calls = llm.read_ledger(wf_id)
             print(f"\n  {BOLD}LLM call ledger{RESET} (one line per model call; pids show the worker restart):")
             for step_name in wf.get("step_order", []):

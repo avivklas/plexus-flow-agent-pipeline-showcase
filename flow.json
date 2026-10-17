@@ -3,8 +3,11 @@
   "steps": [
     { "name": "triage",          "activity": "triage-agent",      "retries": 3, "timeout": "60s" },
 
-    { "name": "kb-research",     "activity": "kb-research-agent", "retries": 5, "timeout": "60s", "depends_on": ["triage"] },
-    { "name": "account-lookup",  "activity": "account-agent",     "retries": 3, "timeout": "60s", "depends_on": ["triage"] },
+    { "name": "kb-research",     "activity": "kb-research-agent", "retries": 5, "timeout": "60s", "depends_on": ["triage"],
+      "retry_policy": { "initial_interval": "100ms", "backoff_coefficient": 2.0, "max_interval": "1s",
+                        "non_retryable_error_codes": ["NO_POLICY", "LLM_BAD_REQUEST"] } },
+    { "name": "account-lookup",  "activity": "account-agent",     "retries": 3, "timeout": "60s", "depends_on": ["triage"],
+      "retry_policy": { "non_retryable_error_codes": ["UNKNOWN_CUSTOMER", "UNKNOWN_ORDER", "LLM_BAD_REQUEST"] } },
     { "name": "sentiment",       "activity": "sentiment-agent",   "retries": 3, "timeout": "60s", "depends_on": ["triage"] },
 
     { "name": "resolution-plan", "activity": "planner-agent",     "retries": 3, "timeout": "60s",
@@ -16,6 +19,7 @@
     { "name": "draft-reply",     "activity": "draft-reply-agent", "retries": 3, "timeout": "60s",
       "depends_on": ["resolution-plan", "issue-refund"] },
     { "name": "guardrail",       "activity": "guardrail-agent",   "retries": 1, "timeout": "60s",
+      "retry_policy": { "non_retryable_error_codes": ["POLICY_VIOLATION", "LLM_BAD_REQUEST"] },
       "depends_on": ["resolution-plan", "draft-reply"] },
 
     { "name": "await-approval",  "kind": "wait_signal", "signal": "approval", "timeout": "2m",

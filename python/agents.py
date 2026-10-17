@@ -234,6 +234,17 @@ async def draft_reply(ctx: TaskContext, t: dict[str, Any]) -> dict[str, Any]:
     first = plan["customer_name"].split()[0]
     chaos = t.get("chaos") or {}
 
+    if not QUIET:
+        if ctx.last_progress:
+            say("draft-reply-agent", t, f"♻️  resumed from heartbeat checkpoint {ctx.last_progress}", CYAN)
+        else:
+            await ctx.report_progress({
+                "stage": "context_prepared",
+                "action": plan["action"],
+                "refund_id": refund.get("refund_id"),
+                "amount": refund.get("amount", 0),
+            })
+
     def mock() -> dict[str, Any]:
         if refund.get("skipped"):
             done = "I've escalated your case to our specialist team, who will contact you within one business day."

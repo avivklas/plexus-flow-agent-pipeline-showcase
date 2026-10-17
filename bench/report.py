@@ -591,11 +591,14 @@ def write_report(results_path: Path) -> Path:
             series=hist_series,
             y_unit=" ms",
         )
+        mem_row = next((r for r in rows if r["case"]["dedup_memory"]), rows[0])
+        mem_rp = mem_row["round_p50_ms"]
+        mem_range = f"~{min(mem_rp):.0f}–{max(mem_rp):.0f} ms" if mem_rp else f"~{mem_row['p50_ms']:.0f} ms"
         out += [
             "## 4. Sustained Throughput Over Time (`dedup.db` vs. In-Memory Dedup)",
             "",
             "Running identical bursts of 50 workflows back-to-back on a single engine isolates how state accumulation affects latency:",
-            "- **`in-memory dedup` (green line):** p50 latency stays completely flat (~65–75 ms at `50` concurrent workflows) across 800 cumulative workflows.",
+            f"- **`in-memory dedup` (green line):** p50 latency stays completely flat ({mem_range} at `50` concurrent workflows, **{mem_row['throughput_wps']:,.1f} wf/s** / **{mem_row['steps_per_s']:,.0f} steps/s**) across 800 cumulative workflows (with automatic `ActivityStore` pruning of terminal workflows).",
             "- **`dedup.db (file store)` (red line):** `plexus`'s default `dedup.FileStore` serializes and rewrites its entire JSON snapshot on every dispatched step, causing latency to grow linearly with total historical steps executed.",
             "",
             "![Sustained History: In-Memory vs dedup.db](charts/history_dedup.svg)",

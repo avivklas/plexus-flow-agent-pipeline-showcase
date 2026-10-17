@@ -24,13 +24,17 @@ This showcase is a **support ticket resolver**: seven LLM agents plus two side-e
 
 ```json
 { "name": "triage",          "activity": "triage-agent",      "retries": 3, "timeout": "60s" },
-{ "name": "kb-research",     "activity": "kb-research-agent", "retries": 5, "timeout": "60s", "depends_on": ["triage"] },
-{ "name": "account-lookup",  "activity": "account-agent",     "retries": 3, "timeout": "60s", "depends_on": ["triage"] },
+{ "name": "kb-research",     "activity": "kb-research-agent", "retries": 5, "timeout": "60s", "depends_on": ["triage"],
+  "retry_policy": { "initial_interval": "100ms", "backoff_coefficient": 2.0, "max_interval": "1s",
+                    "non_retryable_error_codes": ["NO_POLICY", "LLM_BAD_REQUEST"] } },
+{ "name": "account-lookup",  "activity": "account-agent",     "retries": 3, "timeout": "60s", "depends_on": ["triage"],
+  "retry_policy": { "non_retryable_error_codes": ["UNKNOWN_CUSTOMER", "UNKNOWN_ORDER", "LLM_BAD_REQUEST"] } },
 { "name": "sentiment",       "activity": "sentiment-agent",   "retries": 3, "timeout": "60s", "depends_on": ["triage"] },
 { "name": "resolution-plan", "activity": "planner-agent",     "depends_on": ["triage", "kb-research", "account-lookup", "sentiment"] },
 { "name": "issue-refund",    "activity": "issue-refund",      "compensating_action": "reverse-refund", "depends_on": ["resolution-plan"] },
 { "name": "draft-reply",     "activity": "draft-reply-agent", "depends_on": ["resolution-plan", "issue-refund"] },
-{ "name": "guardrail",       "activity": "guardrail-agent",   "depends_on": ["resolution-plan", "draft-reply"] },
+{ "name": "guardrail",       "activity": "guardrail-agent",   "depends_on": ["resolution-plan", "draft-reply"],
+  "retry_policy": { "non_retryable_error_codes": ["POLICY_VIOLATION", "LLM_BAD_REQUEST"] } },
 { "name": "await-approval",  "kind": "wait_signal", "signal": "approval", "timeout": "2m", "depends_on": ["guardrail"] },
 { "name": "send-reply",      "activity": "send-reply",        "compensating_action": "retract-reply", "depends_on": ["draft-reply", "await-approval"] }
 ```
@@ -58,13 +62,14 @@ flowchart LR
 |---|---|---|
 | Run sub-agents in parallel, then join | `depends_on` | asyncio fan-out/fan-in, partial-failure handling |
 | Pass context between agents | `ctx.dependency_outputs` | a state object threaded through a graph framework |
-| LLM rate limits (429), flaky providers, malformed JSON | `"retries": 5` | tenacity decorators, backoff, jitter, per-call bookkeeping |
+| LLM rate limits (429), exponential backoff & non-retryable errors | `"retries": 5` + `"retry_policy"` | tenacity decorators, backoff timers, error-code filters |
 | A model call that hangs | `"timeout": "60s"` | cancellation plumbing, watchdogs |
 | Human approval | `"kind": "wait_signal"` | a DB table of pending approvals, a poller, a resume path |
-| No one approves in time | `"timeout"` on the signal step | cron jobs that expire stale approvals |
+| No one approves in time | `"timeout"` on the signal step | cron jobs that expire stale approvals ($O(\log N)$ min-heap timers) |
 | Undo what an agent already did | `"compensating_action"` | hand-written rollback code for every failure path |
-| Process crashes mid-run | nothing: state is Raft-replicated | checkpointing, idempotency keys, replay logic |
-| See what happened | dashboard at `/` | tracing, log correlation |
+| Process crashes mid-run (or mid-step) | Raft state + `ctx.report_progress(...)` / `ctx.last_progress` | checkpointing tables, idempotency keys, replay logic |
+| Recurring scheduled runs & cold archival | `POST /api/v1/schedules` & `POST /api/v1/workflows/compact` | external cron runners, DB archival & retention jobs |
+| See what happened in real time | dashboard at `/` + SSE `/watch` | tracing infrastructure, log correlation, polling loops |
 
 ## An agent is just a function
 
@@ -171,22 +176,24 @@ A signal payload isn't a failure. `send-reply` turns `approved: false` into a pe
 
 ```text
   • draft-reply      RUNNING
-💥 [chaos] SIGKILL python agent worker (pid 1656) while draft-reply is in flight
+💥 [chaos] SIGKILL python agent worker (pid 3360) while draft-reply is in flight
 ♻️  [chaos] restarting python agent worker: plexus-flow redelivers the lost task
+[draft-reply-agent] TCK-1001: ♻️  resumed from heartbeat checkpoint {'stage': 'context_prepared', 'action': 'goodwill_partial_refund', 'refund_id': 'RF-425000', 'amount': 47.25}
 [draft-reply-agent] TCK-1001: drafted "Re: Espresso machine arrived cracked"
 ✔ COMPLETED
+  ♻️  Heartbeat checkpoint preserved across worker crash (draft-reply): {'stage': 'context_prepared', 'action': 'goodwill_partial_refund', 'refund_id': 'RF-425000', 'amount': 47.25}
 
   LLM call ledger (one line per model call; pids show the worker restart):
-    triage           1 call(s)  pids=[1656]  ✓ once
-    kb-research      1 call(s)  pids=[1656]  ✓ once
-    account-lookup   1 call(s)  pids=[1656]  ✓ once
-    sentiment        1 call(s)  pids=[1656]  ✓ once
-    resolution-plan  1 call(s)  pids=[1656]  ✓ once
-    draft-reply      2 call(s)  pids=[1656, 1758]  ← in flight during the crash, re-run
-    guardrail        1 call(s)  pids=[1758]  ✓ once
+    triage           1 call(s)  pids=[3360]  ✓ once
+    kb-research      1 call(s)  pids=[3360]  ✓ once
+    account-lookup   1 call(s)  pids=[3360]  ✓ once
+    sentiment        1 call(s)  pids=[3360]  ✓ once
+    resolution-plan  1 call(s)  pids=[3360]  ✓ once
+    draft-reply      2 call(s)  pids=[3360, 3382]  ← in flight during the crash, re-run
+    guardrail        1 call(s)  pids=[3382]  ✓ once
 ```
 
-Five finished LLM calls were not paid for twice, and the refund was not issued twice. Results are committed through Raft, and the refund tool is idempotent per workflow.
+Five finished LLM calls were not paid for twice, the in-flight step resumed with its last heartbeat checkpoint (`ctx.last_progress`), and the refund was not issued twice. Results are committed through Raft, and the refund tool is idempotent per workflow.
 
 ### 6. `timeout`: nobody answers
 
@@ -263,7 +270,7 @@ curl -X POST http://127.0.0.1:8080/api/v1/workflows/<workflow-id>/signal \
 
 ## How does it scale?
 
-[`bench/`](bench/) measures how latency responds to load, worker fleet size, pipeline size and engine uptime, using the real pipeline with the mock model so only orchestration cost is counted. Headline: **5.7 ms p50 for the whole 10-step pipeline** at low load. At high load the engine, not the workers, sets the limit: throughput plateaus at ≈290 workflows/s once a known dedup-store issue is taken out of the picture. See [bench/README.md](bench/README.md) for the findings and [bench/RESULTS.md](bench/RESULTS.md) for charts.
+[`bench/`](bench/) measures how latency responds to worker slots (`--max-concurrency`), worker fleet size, parallel workflow bursts, pipeline DAG size, and engine uptime, using the real 10-step pipeline with the mock model. Headline: **2.6 ms p50 (`0.33 ms/step`) for the whole 10-step pipeline** at low load, **1,024 concurrent workflows within 1.5× baseline p95 (`1,465 ms` vs. `1,075 ms` baseline at `150 ms`/step)** across 8 workers × 128 slots (`651.7 wf/s`), and a single-node coordinator ceiling of **1,074 workflows/s (10,736 steps/s)** with single-commit atomic step advancement and automatic `ActivityStore` pruning. See [bench/README.md](bench/README.md) for the findings and [bench/RESULTS.md](bench/RESULTS.md) for charts.
 
 ```bash
 uv run python bench/bench.py --quick
@@ -288,5 +295,5 @@ bench/                 scale benchmark: driver, report generator, results
 ## Honest limits
 
 - **The DAG is fixed per workflow.** plexus-flow has no conditional branches, loops, or fan-out sized by the model at runtime. Put loops inside a step (an agent's tool-use loop) and keep the graph declarative. Bounded critique→revise cycles can be unrolled into explicit steps.
-- **Durations.** The engine's JSON uses nanoseconds. `flow.json` uses readable strings (`"60s"`), and the launcher converts them (`to_ns` in `launcher.py`).
+- **Durations.** The engine's JSON uses nanoseconds. `flow.json` uses readable strings (`"60s"`, `"100ms"`), and the launcher converts them (`to_ns` in `launcher.py`).
 - **The tools are simulations.** The ledger and outbox live in memory in the Go worker. Swap in Stripe and your helpdesk API, keeping the idempotency key (the workflow ID).
