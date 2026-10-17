@@ -2,11 +2,7 @@ module github.com/avivklas/agent-pipeline-showcase
 
 go 1.27.0
 
-replace github.com/avivklas/plexus-flow => ../plexus-flow
-
-replace github.com/avivklas/plexus => ../plexus
-
-require github.com/avivklas/plexus-flow v0.0.0-20261014191856-4cda8fbe2be2
+require github.com/avivklas/plexus-flow v0.0.0-20261017101429-c1c9753b12a6
 
 require (
 	github.com/avivklas/plexus v0.2.0 // indirect
