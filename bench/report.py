@@ -12,13 +12,13 @@ from typing import Any
 BENCH = Path(__file__).resolve().parent
 CHARTS = BENCH / "charts"
 
-# Distinct, accessible color palette (Okabe-Ito / Tailwind-inspired)
+# Distinct, accessible color palette
 PALETTE = [
-    "#dc2626",  # red       (1 worker / p99 / dedup.db)
-    "#ea580c",  # orange    (2 workers / p95)
-    "#ca8a04",  # amber     (4 workers)
-    "#2563eb",  # blue      (8 workers / p50)
-    "#16a34a",  # green     (16 workers / in-memory)
+    "#dc2626",  # red
+    "#ea580c",  # orange
+    "#ca8a04",  # amber
+    "#2563eb",  # blue
+    "#16a34a",  # green
     "#7c3aed",  # purple
 ]
 
@@ -102,7 +102,6 @@ def render_line_svg(
     svg: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="100%" '
         f'style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, Helvetica, Arial, sans-serif; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px;">',
-        # Title & Subtitle
         f'<text x="{pad_l}" y="30" font-size="16" font-weight="700" fill="#111827">{html.escape(title)}</text>',
         f'<text x="{pad_l}" y="50" font-size="12" fill="#4b5563">{html.escape(subtitle)}</text>',
     ]
@@ -280,25 +279,100 @@ def _interp_max_flows(xs: list[int], ys: list[float], limit_ms: float) -> float:
 def write_report(results_path: Path) -> Path:
     data = json.loads(results_path.read_text())
     m = data["machine"]
-    step_ms = float(m.get("scaling_step_ms", 20))
-    slots_per_w = int(m.get("scaling_worker_concurrency", 4))
+    step_ms = float(m.get("scaling_step_ms", 50))
+    slots_per_w = int(m.get("scaling_worker_concurrency", 128))
 
     by_sweep: dict[str, list[dict[str, Any]]] = {}
     for r in data["results"]:
         by_sweep.setdefault(r["case"]["sweep"], []).append(r)
 
     out: list[str] = [
-        "# Benchmark: How Worker Scaling & Load Affect Workflow Latency",
+        "# Benchmark: How Worker Slots, Fleet Size & Load Affect Workflow Latency",
         "",
         f"Generated from [`{results_path.name}`](results/{results_path.name}) by `bench/report.py`.",
         "",
         f"**Machine:** {m['cpu']} · {m['cores']} cores · {m['os']} · Go {m['go']} · Python {m['python']} · "
         f"plexus-flow `{m['plexus_flow_commit']}` · {m['date']}",
         "",
+        "## What is a \"Slot\" (`--max-concurrency`)?",
+        "",
+        "When a worker connects to `plexus-flow` over gRPC (`WorkerService.Connect`), it registers with a `max_concurrency` limit—its **slots**:",
+        "- **In the Go worker (`pkg/workerclient`):** Each slot is a concurrent **goroutine** executing an activity handler (`MaxConcurrency`).",
+        "- **In the Python worker (`plexus_flow.Worker`):** Each slot is a concurrent **`asyncio.Task`** on the event loop (`max_concurrency`).",
+        "- **In the `plexus-flow` Broker (`pkg/remote/broker.go`):** The broker tracks `len(session.inflight) < session.max` per connected worker. As long as a worker has free slots, the broker streams tasks to it immediately; once all slots across all workers are full, new tasks wait in `broker.pending[activity]`.",
+        "",
     ]
 
     # -----------------------------------------------------------------------
-    # 1. Worker Scaling Matrix (Parallel Flows x Worker Fleet Size)
+    # 1. Scaling Slots Within a Single Worker (8 .. 128 slots/worker)
+    # -----------------------------------------------------------------------
+    if "slots" in by_sweep:
+        rows = by_sweep["slots"]
+        concurrencies = sorted({r["case"]["concurrency"] for r in rows})
+        slot_counts = sorted({r["case"]["worker_concurrency"] for r in rows})
+        by_kc: dict[tuple[int, int], dict[str, Any]] = {
+            (r["case"]["worker_concurrency"], r["case"]["concurrency"]): r for r in rows
+        }
+
+        c1_p95 = [by_kc[(k, concurrencies[0])]["p95_ms"] for k in slot_counts if (k, concurrencies[0]) in by_kc]
+        base_p95 = sorted(c1_p95)[len(c1_p95) // 2] if c1_p95 else (7 * step_ms + 15.0)
+        sla_15x = round(base_p95 * 1.5, 1)
+        sla_20x = round(base_p95 * 2.0, 1)
+
+        slot_p95_series: list[dict[str, Any]] = []
+        slot_tput_series: list[dict[str, Any]] = []
+        slot_cap_15x: list[float] = []
+        slot_cap_20x: list[float] = []
+
+        for idx, k in enumerate(slot_counts):
+            color = PALETTE[idx % len(PALETTE)]
+            cs = [c for c in concurrencies if (k, c) in by_kc]
+            p95s = [by_kc[(k, c)]["p95_ms"] for c in cs]
+            tputs = [by_kc[(k, c)]["throughput_wps"] for c in cs]
+            slot_p95_series.append({"name": f"{k} slots/worker (1w)", "short": f"{k} slots", "values": p95s, "color": color})
+            slot_tput_series.append({"name": f"{k} slots/worker (1w)", "short": f"{k} slots", "values": tputs, "color": color})
+            slot_cap_15x.append(_interp_max_flows(cs, p95s, sla_15x))
+            slot_cap_20x.append(_interp_max_flows(cs, p95s, sla_20x))
+
+        render_line_svg(
+            CHARTS / "slots_latency_p95.svg",
+            title=f"Single Worker: Slots per Worker (8 → 128) vs. p95 Latency ({step_ms:g} ms/step)",
+            subtitle="1 Python + 1 Go worker process. Increasing max_concurrency (goroutines / asyncio tasks) up to 128 slots.",
+            x_title="Parallel workflows in flight",
+            y_title="Workflow latency p95 (ms, log scale)",
+            x_labels=[str(c) for c in concurrencies],
+            series=slot_p95_series,
+            ref_lines=[
+                {"y": sla_15x, "label": f"1.5× baseline SLA ({sla_15x:.0f} ms)", "color": "#059669"},
+                {"y": sla_20x, "label": f"2.0× baseline SLA ({sla_20x:.0f} ms)", "color": "#d97706"},
+            ],
+            y_unit=" ms",
+            y_log=True,
+        )
+
+        out += [
+            "## 1. Scaling Slots Within a Single Worker (`8 → 32 → 64 → 128` Slots/Worker)",
+            "",
+            f"Because LLM and tool steps are I/O-bound (`{step_ms:g} ms` per step), a single worker process can hold many concurrent "
+            "tasks in flight at once (goroutines in Go, `asyncio.Task`s in Python). Increasing `--max-concurrency` from `8` to `128` "
+            "slots on **just 1 worker process per kind** dramatically increases how many parallel workflows it can handle before queueing:",
+            "",
+            "![Single Worker: Slots per Worker vs p95 Latency](charts/slots_latency_p95.svg)",
+            "",
+            f"| Slots per worker (1 process/kind) | Max parallel flows (**p95 ≤ 1.5× / {sla_15x:.0f} ms**) | Max parallel flows (**p95 ≤ 2.0× / {sla_20x:.0f} ms**) | Peak throughput | Peak step rate |",
+            "|---|---:|---:|---:|---:|",
+        ]
+        for idx, k in enumerate(slot_counts):
+            peak_wf = max(by_kc[(k, c)]["throughput_wps"] for c in concurrencies if (k, c) in by_kc)
+            peak_st = max(by_kc[(k, c)]["steps_per_s"] for c in concurrencies if (k, c) in by_kc)
+            out.append(
+                f"| **{k} slots/worker** | **{slot_cap_15x[idx]:.0f} parallel flows** | "
+                f"**{slot_cap_20x[idx]:.0f} parallel flows** | **{peak_wf:.1f} wf/s** | {peak_st:,.0f} steps/s |"
+            )
+        out.append("")
+
+    # -----------------------------------------------------------------------
+    # 2. Worker Fleet Scaling Matrix at 128 Slots/Worker (1..8 workers = 128..1,024 slots)
     # -----------------------------------------------------------------------
     if "scaling" in by_sweep:
         rows = by_sweep["scaling"]
@@ -308,7 +382,6 @@ def write_report(results_path: Path) -> Path:
             (r["case"]["py_workers"], r["case"]["concurrency"]): r for r in rows
         }
 
-        # Single-flow baseline latency (median across worker counts at concurrency=1)
         c1_p50 = [by_wc[(w, concurrencies[0])]["p50_ms"] for w in worker_counts if (w, concurrencies[0]) in by_wc]
         c1_p95 = [by_wc[(w, concurrencies[0])]["p95_ms"] for w in worker_counts if (w, concurrencies[0]) in by_wc]
         baseline_ms = sorted(c1_p50)[len(c1_p50) // 2] if c1_p50 else (7 * step_ms + 8.0)
@@ -325,10 +398,10 @@ def write_report(results_path: Path) -> Path:
         for idx, w in enumerate(worker_counts):
             slots = w * slots_per_w
             color = PALETTE[idx % len(PALETTE)]
-            p50s = [by_wc[(w, c)]["p50_ms"] for c in concurrencies if (w, c) in by_wc]
-            p95s = [by_wc[(w, c)]["p95_ms"] for c in concurrencies if (w, c) in by_wc]
-            tputs = [by_wc[(w, c)]["throughput_wps"] for c in concurrencies if (w, c) in by_wc]
             cs = [c for c in concurrencies if (w, c) in by_wc]
+            p50s = [by_wc[(w, c)]["p50_ms"] for c in cs]
+            p95s = [by_wc[(w, c)]["p95_ms"] for c in cs]
+            tputs = [by_wc[(w, c)]["throughput_wps"] for c in cs]
             label = f"{w} worker{'s' if w > 1 else ''} ({slots} slots)"
             short = f"{w}w ({slots}s)"
             p50_series.append({"name": label, "short": short, "values": p50s, "color": color})
@@ -339,8 +412,8 @@ def write_report(results_path: Path) -> Path:
 
         render_line_svg(
             CHARTS / "scaling_latency_p95.svg",
-            title=f"Parallel Flows vs. Workflow Latency (p95) by Worker Fleet Size ({step_ms:g} ms/step)",
-            subtitle=f"Log2 latency scale · Each line is a worker fleet size ({slots_per_w} slots/worker). Adding workers shifts the queueing wall right.",
+            title=f"Parallel Flows (1 → {concurrencies[-1]}) vs. p95 Latency at {slots_per_w} Slots/Worker ({step_ms:g} ms/step)",
+            subtitle=f"Log2 latency scale · Each worker process runs up to {slots_per_w} concurrent tasks (128 → {worker_counts[-1] * slots_per_w} total slots).",
             x_title="Parallel workflows in flight (submitted concurrently)",
             y_title="Workflow latency p95 (ms, log scale)",
             x_labels=[str(c) for c in concurrencies],
@@ -355,7 +428,7 @@ def write_report(results_path: Path) -> Path:
 
         render_line_svg(
             CHARTS / "scaling_latency_p50.svg",
-            title=f"Parallel Flows vs. Median Workflow Latency (p50) by Worker Fleet Size ({step_ms:g} ms/step)",
+            title=f"Parallel Flows (1 → {concurrencies[-1]}) vs. Median Latency (p50) at {slots_per_w} Slots/Worker ({step_ms:g} ms/step)",
             subtitle=f"Log2 latency scale · Each line is a worker fleet size ({slots_per_w} slots/worker).",
             x_title="Parallel workflows in flight (submitted concurrently)",
             y_title="Workflow latency p50 (ms, log scale)",
@@ -371,9 +444,9 @@ def write_report(results_path: Path) -> Path:
 
         render_grouped_bar_svg(
             CHARTS / "iso_latency_capacity.svg",
-            title="How Many Parallel Flows Can You Run Without Hurting Latency?",
+            title=f"How Many Parallel Flows Can You Run at {slots_per_w} Slots/Worker Without Hurting Latency?",
             subtitle=f"Max parallel workflows supported while keeping p95 latency ≤ 1.5× ({sla_15x:.0f} ms) or ≤ 2.0× ({sla_20x:.0f} ms) of single-flow baseline ({baseline_p95:.0f} ms).",
-            x_title="Worker fleet size (Python agent workers + Go tool workers)",
+            x_title=f"Worker fleet size ({slots_per_w} slots per worker process)",
             y_title="Max parallel workflows supported",
             x_labels=[f"{w} worker{'s' if w > 1 else ''} ({w * slots_per_w} slots)" for w in worker_counts],
             groups=[
@@ -385,8 +458,8 @@ def write_report(results_path: Path) -> Path:
 
         render_line_svg(
             CHARTS / "scaling_throughput.svg",
-            title=f"Parallel Flows vs. Throughput (workflows/s) by Worker Fleet Size ({step_ms:g} ms/step)",
-            subtitle="Throughput scales with parallel flows until all worker slots are busy, then plateaus at the fleet's capacity.",
+            title=f"Parallel Flows vs. Throughput (workflows/s) at {slots_per_w} Slots/Worker ({step_ms:g} ms/step)",
+            subtitle="Throughput rises with parallel flows until hitting either the worker fleet slot cap or the coordinator ceiling.",
             x_title="Parallel workflows in flight",
             y_title="Throughput (completed workflows / sec)",
             x_labels=[str(c) for c in concurrencies],
@@ -397,19 +470,10 @@ def write_report(results_path: Path) -> Path:
         base_peak_wf = max(by_wc[(worker_counts[0], c)]["throughput_wps"] for c in concurrencies if (worker_counts[0], c) in by_wc)
 
         out += [
-            "## 1. Scaling Workers to Support Parallel Flows",
+            f"## 2. Scaling Worker Fleet at `{slots_per_w}` Slots/Worker (Up to `{concurrencies[-1]:,}` Parallel Workflows)",
             "",
-            f"**Workload:** Real 10-step agent pipeline (7 Python LLM agent steps with a 3-way parallel fan-out, 2 Go tool steps, "
-            f"1 approval signal step). Each activity step simulates **{step_ms:g} ms** of external I/O (LLM/API call), and each "
-            f"worker process runs up to **{slots_per_w} concurrent tasks** (`--max-concurrency={slots_per_w}`).",
-            "",
-            f"- **Single-workflow baseline latency (1 flow in flight):** **{baseline_ms:.0f} ms p50 / {baseline_p95:.0f} ms p95** "
-            f"(`7` sequential step stages × `{step_ms:g} ms` = `{7 * step_ms:.0f} ms` of step work + `{max(0.0, baseline_ms - 7 * step_ms):.0f} ms` of `plexus-flow` orchestration).",
-            f"- **Linear worker scaling (`1 → 2 → 4 → 8` workers):** Each workflow executes 9 activity steps across 7 stages "
-            f"(including 3 parallel Python steps in stage 2). Once active step tasks exceed total worker slots (`workers × {slots_per_w}`), "
-            f"extra tasks wait in `plexus-flow`'s broker queue (`b.pending`) for a free worker slot. Doubling workers from `1 → 2 → 4 → 8` "
-            f"scales peak throughput nearly linearly (**1.0× → 2.0× → 4.0× → 7.7×**) and expands the number of parallel workflows that stay within **1.5× baseline p95 latency** from **5 → 10 → 25 → 64 parallel flows**.",
-            "- **Approaching the single-node coordinator ceiling (`8 → 16` workers):** Going from 8 to 16 workers pushes capacity further to **103 parallel flows** (at `p95 ≤ 1.5×`) and **240 workflows/s (2,403 steps/s)**, where the curve begins to bend toward the single-node coordinator ceiling (~3,200 steps/s).",
+            f"**Workload:** Real 10-step agent pipeline (`{step_ms:g} ms` simulated I/O per step, **{slots_per_w} concurrent slots per worker process**). "
+            f"Single-workflow baseline latency is **{baseline_ms:.0f} ms p50 / {baseline_p95:.0f} ms p95** (`7 × {step_ms:g} ms = {7 * step_ms:.0f} ms` of step work).",
             "",
             "![Max Parallel Flows Without Degrading Latency](charts/iso_latency_capacity.svg)",
             "",
@@ -419,7 +483,7 @@ def write_report(results_path: Path) -> Path:
             "",
             "![Parallel Flows vs. Throughput by Worker Count](charts/scaling_throughput.svg)",
             "",
-            "### Capacity Sizing Table (Max Parallel Flows by Worker Fleet Size)",
+            f"### Capacity Sizing Table (`{slots_per_w}` Slots/Worker, `{step_ms:g} ms`/Step)",
             "",
             f"| Worker fleet (`py` + `go`) | Total slots/kind | Max parallel flows (**p95 ≤ 1.5× / {sla_15x:.0f} ms**) | Max parallel flows (**p95 ≤ 2.0× / {sla_20x:.0f} ms**) | Peak throughput | Peak step rate | Fleet speedup |",
             "|---|---:|---:|---:|---:|---:|---:|",
@@ -430,15 +494,15 @@ def write_report(results_path: Path) -> Path:
             peak_st = max(by_wc[(w, c)]["steps_per_s"] for c in concurrencies if (w, c) in by_wc)
             speedup = peak_wf / base_peak_wf if base_peak_wf > 0 else 1.0
             out.append(
-                f"| **{w} worker{'s' if w > 1 else ''}** | {slots} slots | **{cap_15x[idx]:.0f} parallel flows** | "
+                f"| **{w} worker{'s' if w > 1 else ''}** | {slots:,} slots | **{cap_15x[idx]:.0f} parallel flows** | "
                 f"**{cap_20x[idx]:.0f} parallel flows** | **{peak_wf:.1f} wf/s** | {peak_st:,.0f} steps/s | **{speedup:.1f}×** |"
             )
 
         out += [
             "",
-            "### Full p95 Latency Matrix (ms) — Parallel Flows × Worker Fleet Size",
+            f"### Full p95 Latency Matrix (ms) — Parallel Flows × Worker Fleet Size (`{slots_per_w}` Slots/Worker)",
             "",
-            "| Parallel workflows in flight | " + " | ".join(f"**{w} worker{'s' if w > 1 else ''}** ({w * slots_per_w} slots)" for w in worker_counts) + " |",
+            "| Parallel workflows in flight | " + " | ".join(f"**{w} worker{'s' if w > 1 else ''}** ({w * slots_per_w:,} slots)" for w in worker_counts) + " |",
             "|---:|" + "---:|" * len(worker_counts),
         ]
         for c in concurrencies:
@@ -451,20 +515,20 @@ def write_report(results_path: Path) -> Path:
                     v = r["p95_ms"]
                     mark = "✅" if v <= sla_15x else ("⚠️" if v <= sla_20x else "⏳")
                     cells.append(f"{v:.0f} ms {mark}")
-            out.append(f"| **{c}** | " + " | ".join(cells) + " |")
+            out.append(f"| **{c:,}** | " + " | ".join(cells) + " |")
         out.append("")
-        out.append(f"*Legend: ✅ within 1.5× baseline p95 (≤ {sla_15x:.0f} ms) · ⚠️ within 2.0× baseline p95 (≤ {sla_20x:.0f} ms) · ⏳ worker-queueing regime.*")
+        out.append(f"*Legend: ✅ within 1.5× baseline p95 (≤ {sla_15x:.0f} ms) · ⚠️ within 2.0× baseline p95 (≤ {sla_20x:.0f} ms) · ⏳ queueing regime.*")
         out.append("")
 
     # -----------------------------------------------------------------------
-    # 2. Pure Engine Ceiling (0 ms steps)
+    # 3. Pure Engine Ceiling (0 ms steps)
     # -----------------------------------------------------------------------
     if "engine" in by_sweep:
         rows = by_sweep["engine"]
         xs = [str(r["case"]["x"]) for r in rows]
         render_line_svg(
             CHARTS / "engine_ceiling.svg",
-            title="Pure Engine Orchestration Latency vs. Parallel Flows (0 ms step work)",
+            title="Pure Engine Orchestration Latency vs. Parallel Flows (0 ms step work, 128 slots/worker)",
             subtitle="Workers return immediately (0 ms), isolating the plexus-flow coordinator's Raft commit + gRPC dispatch cost.",
             x_title="Parallel workflows in flight",
             y_title="Orchestration latency (ms)",
@@ -479,12 +543,12 @@ def write_report(results_path: Path) -> Path:
         peak_wps = max(r["throughput_wps"] for r in rows)
         peak_sps = max(r["steps_per_s"] for r in rows)
         out += [
-            "## 2. Single-Node Engine Ceiling (0 ms Steps)",
+            "## 3. Single-Node Engine Ceiling (0 ms Steps)",
             "",
             "When workers execute in **0 ms**, all measured latency is pure `plexus-flow` orchestration overhead "
             "(two Raft consensus groups, `flowstore` state transitions, gRPC task dispatch, and SSE completion notifications). "
             f"A single coordinator node peaks at **{peak_wps:.0f} workflows/s ({peak_sps:,.0f} steps/s)**. "
-            "Once your worker fleet produces more than ~2,800 step completions per second, the coordinator itself becomes the bottleneck.",
+            f"Once your worker fleet produces more than ~{int(round(peak_sps, -3)):,} step completions per second, the coordinator itself becomes the bottleneck.",
             "",
             "![Pure Engine Ceiling](charts/engine_ceiling.svg)",
             "",
@@ -494,14 +558,14 @@ def write_report(results_path: Path) -> Path:
         for r in rows:
             c = r["case"]
             out.append(
-                f"| **{c['x']}** | {r['completed']} | {r['p50_ms']:.1f} ms | {r['p95_ms']:.1f} ms | "
+                f"| **{c['x']:,}** | {r['completed']} | {r['p50_ms']:.1f} ms | {r['p95_ms']:.1f} ms | "
                 f"{r['p99_ms']:.1f} ms | {r['max_ms']:.1f} ms | {r['per_step_ms']:.2f} ms | "
                 f"**{r['throughput_wps']:.1f} wf/s** | **{r['steps_per_s']:,.0f} steps/s** |"
             )
         out.append("")
 
     # -----------------------------------------------------------------------
-    # 3. Sustained History: in-memory dedup vs. file-backed dedup.db
+    # 4. Sustained History: in-memory dedup vs. file-backed dedup.db
     # -----------------------------------------------------------------------
     if "history" in by_sweep:
         rows = by_sweep["history"]
@@ -528,10 +592,10 @@ def write_report(results_path: Path) -> Path:
             y_unit=" ms",
         )
         out += [
-            "## 3. Sustained Throughput Over Time (`dedup.db` vs. In-Memory Dedup)",
+            "## 4. Sustained Throughput Over Time (`dedup.db` vs. In-Memory Dedup)",
             "",
             "Running identical bursts of 50 workflows back-to-back on a single engine isolates how state accumulation affects latency:",
-            "- **`in-memory dedup` (green line):** p50 latency stays completely flat (~15–25 ms) across hundreds of workflows.",
+            "- **`in-memory dedup` (green line):** p50 latency stays completely flat (~65–75 ms at `50` concurrent workflows) across 800 cumulative workflows.",
             "- **`dedup.db (file store)` (red line):** `plexus`'s default `dedup.FileStore` serializes and rewrites its entire JSON snapshot on every dispatched step, causing latency to grow linearly with total historical steps executed.",
             "",
             "![Sustained History: In-Memory vs dedup.db](charts/history_dedup.svg)",
@@ -550,7 +614,7 @@ def write_report(results_path: Path) -> Path:
         out.append("")
 
     # -----------------------------------------------------------------------
-    # 4. Pipeline DAG Size (steps per workflow)
+    # 5. Pipeline DAG Size (steps per workflow)
     # -----------------------------------------------------------------------
     if "pipeline" in by_sweep:
         rows = by_sweep["pipeline"]
@@ -570,7 +634,7 @@ def write_report(results_path: Path) -> Path:
             y_unit=" ms",
         )
         out += [
-            "## 4. Pipeline DAG Size (Steps per Workflow)",
+            "## 5. Pipeline DAG Size (Steps per Workflow)",
             "",
             "How workflow complexity affects orchestration cost at 10 concurrent workflows in flight (`10*` is the real agent pipeline; `12`–`100` are synthetic 1→3 fork-join DAGs):",
             "",

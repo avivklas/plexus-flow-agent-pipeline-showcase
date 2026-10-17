@@ -1,16 +1,32 @@
-# Benchmark: How Worker Scaling & Load Affect Workflow Latency
+# Benchmark: How Worker Slots, Fleet Size & Load Affect Workflow Latency
 
-Generated from [`20261016-160019.json`](results/20261016-160019.json) by `bench/report.py`.
+Generated from [`20261017-090316.json`](results/20261017-090316.json) by `bench/report.py`.
 
-**Machine:** Apple M5 Pro · 15 cores · Darwin 25.6.0 · Go go1.27.0 darwin/arm64 · Python 3.13.13 · plexus-flow `025b6e6 (feat/watch-api)` · 2026-10-16T15:58:00
+**Machine:** Apple M5 Pro · 15 cores · Darwin 25.6.0 · Go go1.27.0 darwin/arm64 · Python 3.13.13 · plexus-flow `025b6e6 (feat/watch-api)` · 2026-10-17T08:56:27
 
-## 1. Scaling Workers to Support Parallel Flows
+## What is a "Slot" (`--max-concurrency`)?
 
-**Workload:** Real 10-step agent pipeline (7 Python LLM agent steps with a 3-way parallel fan-out, 2 Go tool steps, 1 approval signal step). Each activity step simulates **20 ms** of external I/O (LLM/API call), and each worker process runs up to **4 concurrent tasks** (`--max-concurrency=4`).
+When a worker connects to `plexus-flow` over gRPC (`WorkerService.Connect`), it registers with a `max_concurrency` limit—its **slots**:
+- **In the Go worker (`pkg/workerclient`):** Each slot is a concurrent **goroutine** executing an activity handler (`MaxConcurrency`).
+- **In the Python worker (`plexus_flow.Worker`):** Each slot is a concurrent **`asyncio.Task`** on the event loop (`max_concurrency`).
+- **In the `plexus-flow` Broker (`pkg/remote/broker.go`):** The broker tracks `len(session.inflight) < session.max` per connected worker. As long as a worker has free slots, the broker streams tasks to it immediately; once all slots across all workers are full, new tasks wait in `broker.pending[activity]`.
 
-- **Single-workflow baseline latency (1 flow in flight):** **161 ms p50 / 163 ms p95** (`7` sequential step stages × `20 ms` = `140 ms` of step work + `21 ms` of `plexus-flow` orchestration).
-- **Linear worker scaling (`1 → 2 → 4 → 8` workers):** Each workflow executes 9 activity steps across 7 stages (including 3 parallel Python steps in stage 2). Once active step tasks exceed total worker slots (`workers × 4`), extra tasks wait in `plexus-flow`'s broker queue (`b.pending`) for a free worker slot. Doubling workers from `1 → 2 → 4 → 8` scales peak throughput nearly linearly (**1.0× → 2.0× → 4.0× → 7.7×**) and expands the number of parallel workflows that stay within **1.5× baseline p95 latency** from **5 → 10 → 25 → 64 parallel flows**.
-- **Approaching the single-node coordinator ceiling (`8 → 16` workers):** Going from 8 to 16 workers pushes capacity further to **103 parallel flows** (at `p95 ≤ 1.5×`) and **240 workflows/s (2,403 steps/s)**, where the curve begins to bend toward the single-node coordinator ceiling (~3,200 steps/s).
+## 1. Scaling Slots Within a Single Worker (`8 → 32 → 64 → 128` Slots/Worker)
+
+Because LLM and tool steps are I/O-bound (`150 ms` per step), a single worker process can hold many concurrent tasks in flight at once (goroutines in Go, `asyncio.Task`s in Python). Increasing `--max-concurrency` from `8` to `128` slots on **just 1 worker process per kind** dramatically increases how many parallel workflows it can handle before queueing:
+
+![Single Worker: Slots per Worker vs p95 Latency](charts/slots_latency_p95.svg)
+
+| Slots per worker (1 process/kind) | Max parallel flows (**p95 ≤ 1.5× / 1609 ms**) | Max parallel flows (**p95 ≤ 2.0× / 2146 ms**) | Peak throughput | Peak step rate |
+|---|---:|---:|---:|---:|
+| **8 slots/worker** | **8 parallel flows** | **14 parallel flows** | **7.5 wf/s** | 75 steps/s |
+| **32 slots/worker** | **35 parallel flows** | **54 parallel flows** | **29.7 wf/s** | 297 steps/s |
+| **64 slots/worker** | **69 parallel flows** | **106 parallel flows** | **57.5 wf/s** | 575 steps/s |
+| **128 slots/worker** | **138 parallel flows** | **214 parallel flows** | **111.1 wf/s** | 1,111 steps/s |
+
+## 2. Scaling Worker Fleet at `128` Slots/Worker (Up to `1,024` Parallel Workflows)
+
+**Workload:** Real 10-step agent pipeline (`150 ms` simulated I/O per step, **128 concurrent slots per worker process**). Single-workflow baseline latency is **1070 ms p50 / 1072 ms p95** (`7 × 150 ms = 1050 ms` of step work).
 
 ![Max Parallel Flows Without Degrading Latency](charts/iso_latency_capacity.svg)
 
@@ -20,60 +36,59 @@ Generated from [`20261016-160019.json`](results/20261016-160019.json) by `bench/
 
 ![Parallel Flows vs. Throughput by Worker Count](charts/scaling_throughput.svg)
 
-### Capacity Sizing Table (Max Parallel Flows by Worker Fleet Size)
+### Capacity Sizing Table (`128` Slots/Worker, `150 ms`/Step)
 
-| Worker fleet (`py` + `go`) | Total slots/kind | Max parallel flows (**p95 ≤ 1.5× / 244 ms**) | Max parallel flows (**p95 ≤ 2.0× / 325 ms**) | Peak throughput | Peak step rate | Fleet speedup |
+| Worker fleet (`py` + `go`) | Total slots/kind | Max parallel flows (**p95 ≤ 1.5× / 1608 ms**) | Max parallel flows (**p95 ≤ 2.0× / 2144 ms**) | Peak throughput | Peak step rate | Fleet speedup |
 |---|---:|---:|---:|---:|---:|---:|
-| **1 worker** | 4 slots | **5 parallel flows** | **8 parallel flows** | **26.3 wf/s** | 263 steps/s | **1.0×** |
-| **2 workers** | 8 slots | **10 parallel flows** | **17 parallel flows** | **51.7 wf/s** | 517 steps/s | **2.0×** |
-| **4 workers** | 16 slots | **26 parallel flows** | **40 parallel flows** | **104.5 wf/s** | 1,045 steps/s | **4.0×** |
-| **8 workers** | 32 slots | **65 parallel flows** | **98 parallel flows** | **202.6 wf/s** | 2,026 steps/s | **7.7×** |
-| **16 workers** | 64 slots | **105 parallel flows** | **138 parallel flows** | **240.3 wf/s** | 2,403 steps/s | **9.1×** |
+| **1 worker** | 128 slots | **139 parallel flows** | **210 parallel flows** | **117.1 wf/s** | 1,171 steps/s | **1.0×** |
+| **2 workers** | 256 slots | **280 parallel flows** | **426 parallel flows** | **221.3 wf/s** | 2,213 steps/s | **1.9×** |
+| **4 workers** | 512 slots | **551 parallel flows** | **832 parallel flows** | **389.9 wf/s** | 3,899 steps/s | **3.3×** |
+| **8 workers** | 1,024 slots | **847 parallel flows** | **1024 parallel flows** | **537.7 wf/s** | 5,377 steps/s | **4.6×** |
 
-### Full p95 Latency Matrix (ms) — Parallel Flows × Worker Fleet Size
+### Full p95 Latency Matrix (ms) — Parallel Flows × Worker Fleet Size (`128` Slots/Worker)
 
-| Parallel workflows in flight | **1 worker** (4 slots) | **2 workers** (8 slots) | **4 workers** (16 slots) | **8 workers** (32 slots) | **16 workers** (64 slots) |
-|---:|---:|---:|---:|---:|---:|
-| **1** | 164 ms ✅ | 163 ms ✅ | 160 ms ✅ | 160 ms ✅ | 163 ms ✅ |
-| **4** | 215 ms ✅ | 179 ms ✅ | 160 ms ✅ | 161 ms ✅ | 161 ms ✅ |
-| **8** | 327 ms ⏳ | 215 ms ✅ | 169 ms ✅ | 155 ms ✅ | 159 ms ✅ |
-| **16** | 612 ms ⏳ | 308 ms ⚠️ | 199 ms ✅ | 152 ms ✅ | 153 ms ✅ |
-| **32** | 1125 ms ⏳ | 536 ms ⏳ | 271 ms ⚠️ | 173 ms ✅ | 169 ms ✅ |
-| **64** | 2372 ms ⏳ | 1119 ms ⏳ | 505 ms ⏳ | 242 ms ✅ | 159 ms ✅ |
-| **128** | 4690 ms ⏳ | 2227 ms ⏳ | 955 ms ⏳ | 399 ms ⏳ | 291 ms ⚠️ |
-| **256** | 9422 ms ⏳ | 4348 ms ⏳ | 1872 ms ⏳ | 692 ms ⏳ | 750 ms ⏳ |
+| Parallel workflows in flight | **1 worker** (128 slots) | **2 workers** (256 slots) | **4 workers** (512 slots) | **8 workers** (1,024 slots) |
+|---:|---:|---:|---:|---:|
+| **1** | 1071 ms ✅ | 1072 ms ✅ | 1070 ms ✅ | 1074 ms ✅ |
+| **16** | 1095 ms ✅ | 1102 ms ✅ | 1094 ms ✅ | 1098 ms ✅ |
+| **64** | 1233 ms ✅ | 1123 ms ✅ | 1132 ms ✅ | 1139 ms ✅ |
+| **128** | 1529 ms ✅ | 1271 ms ✅ | 1173 ms ✅ | 1207 ms ✅ |
+| **256** | 2484 ms ⏳ | 1520 ms ✅ | 1294 ms ✅ | 1276 ms ✅ |
+| **512** | 4524 ms ⏳ | 2458 ms ⏳ | 1534 ms ✅ | 1270 ms ✅ |
+| **1,024** | 8589 ms ⏳ | 4408 ms ⏳ | 2509 ms ⏳ | 1785 ms ⚠️ |
 
-*Legend: ✅ within 1.5× baseline p95 (≤ 244 ms) · ⚠️ within 2.0× baseline p95 (≤ 325 ms) · ⏳ worker-queueing regime.*
+*Legend: ✅ within 1.5× baseline p95 (≤ 1608 ms) · ⚠️ within 2.0× baseline p95 (≤ 2144 ms) · ⏳ queueing regime.*
 
-## 2. Single-Node Engine Ceiling (0 ms Steps)
+## 3. Single-Node Engine Ceiling (0 ms Steps)
 
-When workers execute in **0 ms**, all measured latency is pure `plexus-flow` orchestration overhead (two Raft consensus groups, `flowstore` state transitions, gRPC task dispatch, and SSE completion notifications). A single coordinator node peaks at **417 workflows/s (4,167 steps/s)**. Once your worker fleet produces more than ~2,800 step completions per second, the coordinator itself becomes the bottleneck.
+When workers execute in **0 ms**, all measured latency is pure `plexus-flow` orchestration overhead (two Raft consensus groups, `flowstore` state transitions, gRPC task dispatch, and SSE completion notifications). A single coordinator node peaks at **694 workflows/s (6,940 steps/s)**. Once your worker fleet produces more than ~7,000 step completions per second, the coordinator itself becomes the bottleneck.
 
 ![Pure Engine Ceiling](charts/engine_ceiling.svg)
 
 | Parallel workflows in flight | Runs | p50 (median) | p95 | p99 (tail) | Max | Per step (p50) | Throughput (wf/s) | Step rate (steps/s) |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **1** | 30 | 3.3 ms | 3.7 ms | 3.9 ms | 4.0 ms | 0.41 ms | **303.8 wf/s** | **3,038 steps/s** |
-| **10** | 30 | 7.1 ms | 16.3 ms | 21.4 ms | 22.2 ms | 0.89 ms | **416.7 wf/s** | **4,167 steps/s** |
-| **50** | 100 | 16.8 ms | 105.6 ms | 123.9 ms | 149.7 ms | 2.10 ms | **319.6 wf/s** | **3,196 steps/s** |
-| **100** | 200 | 35.0 ms | 215.2 ms | 250.2 ms | 281.0 ms | 4.37 ms | **336.7 wf/s** | **3,367 steps/s** |
-| **250** | 500 | 69.0 ms | 492.2 ms | 628.8 ms | 714.5 ms | 8.63 ms | **320.8 wf/s** | **3,208 steps/s** |
-| **500** | 1000 | 87.6 ms | 1029.8 ms | 1283.4 ms | 1446.0 ms | 10.95 ms | **325.0 wf/s** | **3,250 steps/s** |
+| **1** | 30 | 3.3 ms | 3.9 ms | 4.0 ms | 4.1 ms | 0.41 ms | **304.2 wf/s** | **3,042 steps/s** |
+| **10** | 30 | 18.3 ms | 23.2 ms | 23.4 ms | 23.4 ms | 2.29 ms | **489.4 wf/s** | **4,894 steps/s** |
+| **50** | 100 | 74.0 ms | 79.1 ms | 79.6 ms | 79.8 ms | 9.26 ms | **616.6 wf/s** | **6,166 steps/s** |
+| **100** | 200 | 142.4 ms | 151.9 ms | 155.4 ms | 156.5 ms | 17.80 ms | **631.0 wf/s** | **6,310 steps/s** |
+| **250** | 500 | 341.8 ms | 354.8 ms | 360.2 ms | 361.3 ms | 42.73 ms | **660.0 wf/s** | **6,600 steps/s** |
+| **500** | 1000 | 659.5 ms | 688.5 ms | 698.5 ms | 706.8 ms | 82.44 ms | **679.1 wf/s** | **6,791 steps/s** |
+| **1,000** | 2000 | 1302.9 ms | 1338.3 ms | 1353.6 ms | 1376.8 ms | 162.87 ms | **694.0 wf/s** | **6,940 steps/s** |
 
-## 3. Sustained Throughput Over Time (`dedup.db` vs. In-Memory Dedup)
+## 4. Sustained Throughput Over Time (`dedup.db` vs. In-Memory Dedup)
 
 Running identical bursts of 50 workflows back-to-back on a single engine isolates how state accumulation affects latency:
-- **`in-memory dedup` (green line):** p50 latency stays completely flat (~15–25 ms) across hundreds of workflows.
+- **`in-memory dedup` (green line):** p50 latency stays completely flat (~65–75 ms at `50` concurrent workflows) across 800 cumulative workflows.
 - **`dedup.db (file store)` (red line):** `plexus`'s default `dedup.FileStore` serializes and rewrites its entire JSON snapshot on every dispatched step, causing latency to grow linearly with total historical steps executed.
 
 ![Sustained History: In-Memory vs dedup.db](charts/history_dedup.svg)
 
 | Dedup store | Cumulative workflows | First burst p50 | Final burst p50 | Overall p50 | Overall p99 | Avg throughput |
 |---|---:|---:|---:|---:|---:|---:|
-| **in-memory dedup** | 800 | 29.8 ms | 23.5 ms | 22.1 ms | 123.8 ms | 352.3 wf/s |
-| **dedup.db (file store)** | 800 | 27.8 ms | 1006.3 ms | 465.6 ms | 1014.0 ms | 75.2 wf/s |
+| **in-memory dedup** | 800 | 76.2 ms | 69.9 ms | 67.8 ms | 78.1 ms | 665.9 wf/s |
+| **dedup.db (file store)** | 800 | 170.5 ms | 1059.1 ms | 604.8 ms | 1099.4 ms | 76.0 wf/s |
 
-## 4. Pipeline DAG Size (Steps per Workflow)
+## 5. Pipeline DAG Size (Steps per Workflow)
 
 How workflow complexity affects orchestration cost at 10 concurrent workflows in flight (`10*` is the real agent pipeline; `12`–`100` are synthetic 1→3 fork-join DAGs):
 
@@ -81,8 +96,8 @@ How workflow complexity affects orchestration cost at 10 concurrent workflows in
 
 | Steps per workflow | Critical path | Runs | p50 | p95 | p99 | Per step (p50) | Throughput (wf/s) | Step rate (steps/s) |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **10*** | 8 stages | 30 | 6.5 ms | 18.4 ms | 24.4 ms | 0.81 ms | 400.8 wf/s | 4,008 steps/s |
-| **12** | 6 stages | 30 | 10.3 ms | 12.0 ms | 12.4 ms | 1.72 ms | 506.3 wf/s | 6,076 steps/s |
-| **24** | 12 stages | 30 | 40.9 ms | 46.1 ms | 46.7 ms | 3.41 ms | 192.2 wf/s | 4,612 steps/s |
-| **48** | 24 stages | 30 | 134.7 ms | 149.2 ms | 149.5 ms | 5.61 ms | 67.4 wf/s | 3,236 steps/s |
-| **100** | 50 stages | 30 | 518.5 ms | 542.3 ms | 542.8 ms | 10.37 ms | 18.6 wf/s | 1,864 steps/s |
+| **10*** | 8 stages | 30 | 16.7 ms | 19.6 ms | 19.9 ms | 2.09 ms | 547.3 wf/s | 5,473 steps/s |
+| **12** | 6 stages | 30 | 15.6 ms | 19.9 ms | 20.0 ms | 2.60 ms | 542.1 wf/s | 6,505 steps/s |
+| **24** | 12 stages | 30 | 44.4 ms | 53.4 ms | 53.9 ms | 3.70 ms | 202.9 wf/s | 4,870 steps/s |
+| **48** | 24 stages | 30 | 144.4 ms | 156.4 ms | 157.1 ms | 6.02 ms | 66.3 wf/s | 3,180 steps/s |
+| **100** | 50 stages | 30 | 542.2 ms | 570.9 ms | 571.7 ms | 10.84 ms | 18.0 wf/s | 1,800 steps/s |

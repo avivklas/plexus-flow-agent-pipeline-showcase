@@ -2,23 +2,22 @@
 """How does scale affect latency? A benchmark for the agent pipeline on plexus-flow.
 
 Sweeps:
-  scaling   2D matrix of (worker fleet size W) x (parallel workflows in flight C)
-            with realistic per-step I/O duration (default 20 ms/step, 4 slots/worker).
-            Answers: how many parallel flows can I run per worker without hurting
-            latency, and where does adding more workers hit the engine ceiling?
-  engine    pure orchestration ceiling (0 ms steps): how fast can one plexus-flow
-            coordinator dispatch and commit steps when workers are infinitely fast?
-  history   back-to-back bursts of 50 workflows comparing the default file-backed
-            dedup store (dedup.db) against the in-memory dedup store.
+  slots     1 worker process per kind, varying slots (max_concurrency: 8, 32, 64, 128
+            concurrent goroutines / asyncio tasks per worker) across 1..512 parallel workflows.
+  scaling   128 slots/worker, varying worker processes (1, 2, 4, 8 workers = 128..1,024
+            total slots/kind) across 1..1,024 parallel workflows.
+  engine    pure orchestration ceiling (0 ms steps, 128 slots/worker) across 1..1,000
+            parallel workflows: raw coordinator commit + dispatch speed.
+  history   back-to-back bursts of 50 workflows comparing in-memory dedup vs. dedup.db.
   pipeline  steps per workflow (10-step real agent pipeline + 12/24/48/100-step
-            synthetic fork-join DAGs): how DAG size affects per-step overhead.
+            synthetic fork-join DAGs).
 
 Completion is streamed via Server-Sent Events (GET /api/v1/flows/{flow}/watch?terminal=1),
 and latency is computed from the engine's own started_at -> ended_at timestamps.
 
-    uv run python bench/bench.py                        # all sweeps + charts
-    uv run python bench/bench.py --sweep scaling        # only the worker scaling matrix
-    uv run python bench/bench.py --quick                # faster subset (~45s)
+    uv run python bench/bench.py                        # all sweeps + SVG charts
+    uv run python bench/bench.py --sweep slots,scaling  # slot & worker scaling matrices
+    uv run python bench/bench.py --quick                # faster subset
 """
 
 from __future__ import annotations
@@ -60,7 +59,7 @@ CYAN, GREEN, YELLOW, RED, BOLD, DIM, RESET = "\033[36m", "\033[32m", "\033[33m",
 class Case:
     sweep: str
     x: int                      # primary x-axis value (parallel flows, total workflows, or steps)
-    series: str                 # series label for multi-line plots (e.g. "4 workers (16 slots)")
+    series: str                 # series label for multi-line plots (e.g. "4 workers (512 slots)")
     workload: str               # "agent" (real 10-step pipeline) or "synthetic" (no-op fork-join DAG)
     steps: int
     critical_path: int          # longest dependency chain, in steps
@@ -68,7 +67,7 @@ class Case:
     py_workers: int = 0
     go_workers: int = 0
     noop_workers: int = 0
-    worker_concurrency: int = 4
+    worker_concurrency: int = 128
     step_ms: float = 0.0        # simulated I/O duration per activity step (ms)
     dedup_memory: bool = True   # True avoids dedup.db full-file rewrite drift unless testing history
     rounds: int = 2             # bursts to run for this point
@@ -94,66 +93,86 @@ class Result:
     latencies_ms: list[float] = field(default_factory=list, repr=False)
 
 
-def sweeps(quick: bool, step_ms: float, slots_per_worker: int) -> dict[str, list[Case]]:
+def sweeps(quick: bool, step_ms: float, max_slots: int) -> dict[str, list[Case]]:
     # In the 10-step agent pipeline:
-    # - 8 steps are on the critical path (7 activity stages + 1 signal stage; stage 2 fans out to 3 parallel agents)
+    # 7 activity stages (stage 2 fans out to 3 parallel Python agents) + 1 signal stage
     agent_steps, agent_cp = 10, 7 if step_ms > 0 else 8
-    worker_counts = [1, 2, 4, 8] if quick else [1, 2, 4, 8, 16]
-    parallel_flows = [1, 4, 8, 16, 32, 64, 128] if quick else [1, 4, 8, 16, 32, 64, 128, 256]
-    engine_loads = [1, 10, 50, 100, 250] if quick else [1, 10, 50, 100, 250, 500]
-    dag_sizes = [12, 24, 48] if quick else [12, 24, 48, 100]
-    hist_rounds = 10 if quick else 16
 
-    scaling_cases: list[Case] = []
-    for w in worker_counts:
-        slots = w * slots_per_worker
-        label = f"{w} worker{'s' if w > 1 else ''} ({slots} slots)"
-        for c in parallel_flows:
-            rnds = 4 if c == 1 else (3 if c <= 8 else 2)
-            scaling_cases.append(Case(
-                sweep="scaling", x=c, series=label, workload="agent",
+    # 1. `slots` sweep: 1 worker process per kind, varying slots per worker up to 128
+    slot_counts = [8, 32, 128] if quick else [8, 32, 64, 128]
+    slot_flows = [1, 16, 64, 128, 256] if quick else [1, 16, 32, 64, 128, 256, 512]
+    slots_cases: list[Case] = []
+    for k in slot_counts:
+        label = f"{k} slots/worker (1w)"
+        for c in slot_flows:
+            rnds = 3 if c == 1 else (2 if c <= 64 and k >= 32 else 1)
+            slots_cases.append(Case(
+                sweep="slots", x=c, series=label, workload="agent",
                 steps=agent_steps, critical_path=agent_cp, concurrency=c,
-                py_workers=w, go_workers=w, worker_concurrency=slots_per_worker,
+                py_workers=1, go_workers=1, worker_concurrency=k,
                 step_ms=step_ms, dedup_memory=True, rounds=rnds,
             ))
 
+    # 2. `scaling` sweep: 128 slots/worker, varying worker processes (1..8 workers = 128..1,024 slots)
+    #    across up to 1,024 parallel workflows
+    worker_counts = [1, 2, 4] if quick else [1, 2, 4, 8]
+    parallel_flows = [1, 16, 64, 128, 256, 512] if quick else [1, 16, 64, 128, 256, 512, 1024]
+    scaling_cases: list[Case] = []
+    for w in worker_counts:
+        slots = w * max_slots
+        label = f"{w} worker{'s' if w > 1 else ''} ({slots} slots)"
+        for c in parallel_flows:
+            rnds = 3 if c == 1 else (2 if c <= 128 else 1)
+            scaling_cases.append(Case(
+                sweep="scaling", x=c, series=label, workload="agent",
+                steps=agent_steps, critical_path=agent_cp, concurrency=c,
+                py_workers=w, go_workers=w, worker_concurrency=max_slots,
+                step_ms=step_ms, dedup_memory=True, rounds=rnds,
+            ))
+
+    # 3. `engine` sweep: pure 0ms steps with 128 slots/worker up to 1,000 parallel workflows
+    engine_loads = [1, 10, 50, 100, 250, 500] if quick else [1, 10, 50, 100, 250, 500, 1000]
     engine_cases = [
         Case(
             sweep="engine", x=c, series="pure engine (0 ms steps)", workload="agent",
             steps=agent_steps, critical_path=8, concurrency=c,
-            py_workers=4, go_workers=2, worker_concurrency=32,
-            step_ms=0.0, dedup_memory=True, rounds=max(2, 30 // c),
+            py_workers=4, go_workers=2, worker_concurrency=max_slots,
+            step_ms=0.0, dedup_memory=True, rounds=max(2, 30 // c) if c <= 250 else 2,
         )
         for c in engine_loads
     ]
 
+    # 4. `history` sweep: sustained bursts over time (in-memory vs dedup.db)
+    hist_rounds = 10 if quick else 16
     history_cases = [
         Case(
             sweep="history", x=50 * hist_rounds, series="in-memory dedup", workload="agent",
             steps=agent_steps, critical_path=8, concurrency=50,
-            py_workers=4, go_workers=2, worker_concurrency=32,
+            py_workers=4, go_workers=2, worker_concurrency=max_slots,
             step_ms=0.0, dedup_memory=True, rounds=hist_rounds,
         ),
         Case(
             sweep="history", x=50 * hist_rounds, series="dedup.db (file store)", workload="agent",
             steps=agent_steps, critical_path=8, concurrency=50,
-            py_workers=4, go_workers=2, worker_concurrency=32,
+            py_workers=4, go_workers=2, worker_concurrency=max_slots,
             step_ms=0.0, dedup_memory=False, rounds=hist_rounds,
         ),
     ]
 
+    # 5. `pipeline` sweep: DAG size (10..100 steps)
+    dag_sizes = [12, 24, 48] if quick else [12, 24, 48, 100]
     pipeline_cases = [
         Case(
             sweep="pipeline", x=agent_steps, series="real agent pipeline", workload="agent",
             steps=agent_steps, critical_path=8, concurrency=10,
-            py_workers=2, go_workers=2, worker_concurrency=32,
+            py_workers=2, go_workers=2, worker_concurrency=max_slots,
             step_ms=0.0, dedup_memory=True, rounds=3,
         ),
         *[
             Case(
                 sweep="pipeline", x=n, series="synthetic fork-join DAG", workload="synthetic",
                 steps=n, critical_path=2 * (n // 4), concurrency=10,
-                noop_workers=2, worker_concurrency=32,
+                noop_workers=2, worker_concurrency=max_slots,
                 step_ms=0.0, dedup_memory=True, rounds=3,
             )
             for n in dag_sizes
@@ -161,6 +180,7 @@ def sweeps(quick: bool, step_ms: float, slots_per_worker: int) -> dict[str, list
     ]
 
     return {
+        "slots": slots_cases,
         "scaling": scaling_cases,
         "engine": engine_cases,
         "history": history_cases,
@@ -223,6 +243,11 @@ class Stack:
         for i in range(self.case.noop_workers):
             self._spawn([sys.executable, str(BENCH / "noop_worker.py"), f"--grpc-addr={GRPC}",
                          f"--worker-id=noop-{i}", f"--max-concurrency={c}"], env, wlog)
+        deadline = time.time() + 15
+        for i in range(self.case.py_workers):
+            while not (self.dir / f"py-{i}.pid").exists() and time.time() < deadline:
+                time.sleep(0.05)
+        time.sleep(0.2)
         return self
 
     def _spawn(self, cmd: list[str], env: dict[str, str], log: Any) -> None:
@@ -239,8 +264,8 @@ class Stack:
 
 
 def _stack_key(case: Case) -> tuple[Any, ...]:
-    """Small scaling points (c <= 32) for the same worker fleet share a Stack; large bursts get a fresh Stack."""
-    if case.sweep != "scaling" or case.concurrency >= 64 or not case.dedup_memory:
+    """Small scaling points (c <= 64) for the same worker fleet share a Stack; large bursts get a fresh Stack."""
+    if case.sweep not in ("scaling", "slots") or case.concurrency > 64 or not case.dedup_memory:
         return ("unique", id(case))
     return (case.sweep, case.workload, case.py_workers, case.go_workers, case.worker_concurrency, case.step_ms)
 
@@ -276,79 +301,47 @@ async def drive(stack: Stack, case: Case, budget_s: float, rounds_override: int 
         definition, ticket = synthetic_definition(case.steps), {}
     flow = definition["name"]
     approval = {"signal_name": "approval", "payload": {"approved": True, "reviewer": "bench"}}
-    prefix = f"{case.sweep}-w{case.py_workers}-c{case.concurrency}-s{case.steps}"
+    prefix = f"{case.sweep}-w{case.py_workers}-k{case.worker_concurrency}-c{case.concurrency}-s{case.steps}"
+    rounds = rounds_override or case.rounds
+    warmup = 0 if stack.warmed else max(1, case.py_workers * 2)
 
-    limits = httpx.Limits(max_connections=256, max_keepalive_connections=256)
-    async with httpx.AsyncClient(base_url=f"http://{HTTP}", limits=limits, timeout=60) as client:
+    spec = {
+        "flow": flow,
+        "prefix": prefix,
+        "workload": case.workload,
+        "definition": definition,
+        "input": ticket,
+        "approval": approval,
+        "concurrency": case.concurrency,
+        "rounds": rounds,
+        "warmup": warmup,
+        "budget_sec": budget_s,
+        "step_ms": case.step_ms,
+    }
+    proc = subprocess.run(
+        [str(BIN / "bench-driver"), f"--http-addr={HTTP}"],
+        input=json.dumps(spec).encode(),
+        capture_output=True,
+        check=True,
+    )
+    stack.warmed = True
+    out = json.loads(proc.stdout.decode())
+    by_id = {s["workflow_id"]: s for s in out.get("summaries") or []}
+    round_p50: list[float] = []
+    spans: list[float] = []
+    for ids in out.get("round_ids") or []:
+        done = [by_id[i] for i in ids if i in by_id and by_id[i].get("ended_at")]
+        if done:
+            round_lat = sorted((_ts(d["ended_at"]) - _ts(d["started_at"])) * 1000 for d in done)
+            round_p50.append(round(statistics.median(round_lat), 1))
+            spans.append(max(_ts(d["ended_at"]) for d in done) - min(_ts(d["started_at"]) for d in done))
 
-        async def start(wf_id: str) -> None:
-            r = await client.post("/api/v1/workflows/start",
-                                  json={"workflow_id": wf_id, "definition": definition, "input": ticket})
-            r.raise_for_status()
-            if case.workload == "agent":  # signals sent early are buffered until await-approval runs
-                (await client.post(f"/api/v1/workflows/{wf_id}/signal", json=approval)).raise_for_status()
+    stuck = out.get("stuck") or []
+    if stuck:
+        print(f"{RED}  {len(stuck)} workflow(s) unfinished when the time budget ran out{RESET}")
 
-        summaries: dict[str, dict[str, Any]] = {}
-        spans: list[float] = []
-        round_p50: list[float] = []
-        stuck: list[str] = []
-
-        # Stream terminal workflow summaries as server-sent events instead of polling /traces.
-        async with client.stream("GET", f"/api/v1/flows/{flow}/watch?terminal=1", timeout=None) as watch:
-            watch.raise_for_status()
-            lines = watch.aiter_lines()
-
-            async def collect(pending: set[str], deadline: float) -> None:
-                while pending:
-                    remaining = deadline - time.time()
-                    if remaining <= 0:
-                        return
-                    try:
-                        line = await asyncio.wait_for(anext(lines), timeout=remaining)
-                    except (TimeoutError, StopAsyncIteration):
-                        return
-                    if not line.startswith("data:"):
-                        continue
-                    s = json.loads(line[5:])
-                    if s["workflow_id"] in pending and s["status"] in TERMINAL:
-                        summaries[s["workflow_id"]] = s
-                        pending.discard(s["workflow_id"])
-
-            if not stack.warmed:
-                warm = {f"{prefix}-warmup"}
-                await start(f"{prefix}-warmup")
-                await collect(warm, time.time() + 30)
-                if warm:
-                    raise RuntimeError("warm-up workflow did not finish; check bench/data/*/workers.log")
-                summaries.clear()
-                stack.warmed = True
-
-            # Pre-warm the HTTP keep-alive connection pool before starting the timed burst.
-            await asyncio.gather(*(client.get("/api/v1/cluster/status") for _ in range(min(case.concurrency, 64))))
-
-            rounds = rounds_override or case.rounds
-            t0 = time.time()
-            for rnd in range(rounds):
-                ids = [f"{prefix}-r{rnd}-{i}" for i in range(case.concurrency)]
-                pending = set(ids)
-                await asyncio.gather(*(start(i) for i in ids))
-                await collect(pending, t0 + budget_s)
-                done = [summaries[i] for i in ids if i in summaries]
-                if done:
-                    round_lat = sorted((_ts(d["ended_at"]) - _ts(d["started_at"])) * 1000 for d in done)
-                    round_p50.append(round(statistics.median(round_lat), 1))
-                    spans.append(max(_ts(d["ended_at"]) for d in done) - min(_ts(d["started_at"]) for d in done))
-                if pending:
-                    stuck = sorted(pending)
-                    wf = (await client.get(f"/api/v1/workflows/{stuck[0]}")).json()
-                    states = {n: (st["status"], st.get("attempt"), st.get("error", "")) for n, st in wf["steps"].items()
-                              if st["status"] != "COMPLETED"}
-                    print(f"{RED}  {len(stuck)} workflow(s) unfinished when the time budget ran out, "
-                          f"e.g. {stuck[0]}: {wf.get('status')} {states}{RESET}")
-                    break
-
-    res = Result(case=case, wall_s=time.time() - t0, round_p50_ms=round_p50)
-    rows = list(summaries.values())
+    res = Result(case=case, wall_s=float(out.get("wall_sec", 0.0)), round_p50_ms=round_p50)
+    rows = list(by_id.values())
     res.timed_out = bool(stuck)
     res.stuck = len(stuck)
     res.completed = sum(1 for s in rows if s["status"] == "COMPLETED")
@@ -370,6 +363,7 @@ async def drive(stack: Stack, case: Case, budget_s: float, rounds_override: int 
 # ---------------------------------------------------------------------------
 
 SWEEP_LABEL = {
+    "slots": "parallel wf",
     "scaling": "parallel wf",
     "engine": "parallel wf",
     "history": "total wf",
@@ -379,7 +373,7 @@ SWEEP_LABEL = {
 
 def print_header(sweep: str) -> None:
     print(f"\n{BOLD}{CYAN}▶ sweep: {sweep}{RESET}")
-    print(f"{DIM}{'series':<22} {SWEEP_LABEL[sweep]:>11} {'runs':>6} {'p50':>9} {'p95':>9} {'p99':>9} "
+    print(f"{DIM}{'series':<24} {SWEEP_LABEL[sweep]:>11} {'runs':>6} {'p50':>9} {'p95':>9} {'p99':>9} "
           f"{'per step':>9} {'wf/s':>8} {'steps/s':>8}{RESET}")
 
 
@@ -387,7 +381,7 @@ def print_row(r: Result) -> None:
     c = r.case
     warn = f" {RED}({r.failed} failed){RESET}" if r.failed else ""
     warn += f" {YELLOW}({r.stuck} unfinished at budget){RESET}" if r.stuck else ""
-    print(f"{c.series:<22} {c.x:>11} {r.completed + r.failed:>6} {r.p50_ms:>7.1f}ms {r.p95_ms:>7.1f}ms "
+    print(f"{c.series:<24} {c.x:>11} {r.completed + r.failed:>6} {r.p50_ms:>7.1f}ms {r.p95_ms:>7.1f}ms "
           f"{r.p99_ms:>7.1f}ms {r.per_step_ms:>7.2f}ms {r.throughput_wps:>8.1f} {r.steps_per_s:>8.0f}{warn}")
 
 
@@ -441,24 +435,25 @@ def save(results: list[Result], info: dict[str, str]) -> Path:
 
 def ensure_binaries() -> None:
     BIN.mkdir(exist_ok=True)
-    print(f"{DIM}building plexus-flow and the Go tool worker...{RESET}")
+    print(f"{DIM}building plexus-flow, Go tool worker, and Go benchmark driver...{RESET}")
     subprocess.run(["go", "build", "-o", str(BIN / "plexus-flow"), "github.com/avivklas/plexus-flow/cmd/plexus-flow"],
                    cwd=ROOT, check=True)
     subprocess.run(["go", "build", "-o", str(BIN / "tool-worker"), "./go"], cwd=ROOT, check=True)
+    subprocess.run(["go", "build", "-o", str(BIN / "bench-driver"), "./bench/driver.go"], cwd=ROOT, check=True)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--sweep", default="scaling,engine,history,pipeline",
-                        help="comma-separated: scaling,engine,history,pipeline")
-    parser.add_argument("--step-ms", type=float, default=20.0,
-                        help="simulated step I/O time in ms for the worker scaling sweep (default: 20)")
-    parser.add_argument("--worker-concurrency", type=int, default=4,
-                        help="max concurrent tasks per worker process in the scaling sweep (default: 4)")
-    parser.add_argument("--quick", action="store_true", help="smaller sweeps (~45s)")
-    parser.add_argument("--budget", type=float, default=120, help="max seconds per data point")
+    parser.add_argument("--sweep", default="slots,scaling,engine,history,pipeline",
+                        help="comma-separated: slots,scaling,engine,history,pipeline")
+    parser.add_argument("--step-ms", type=float, default=150.0,
+                        help="simulated step I/O time in ms for slots & scaling sweeps (default: 150)")
+    parser.add_argument("--worker-concurrency", type=int, default=128,
+                        help="max concurrent task slots per worker process in scaling sweep (default: 128)")
+    parser.add_argument("--quick", action="store_true", help="smaller sweeps (~60s)")
+    parser.add_argument("--budget", type=float, default=180, help="max seconds per data point")
     parser.add_argument("--rounds", type=int, default=None, help="override bursts per data point")
-    parser.add_argument("--only", default="", help="comma-separated x values to run, e.g. --only 1,16")
+    parser.add_argument("--only", default="", help="comma-separated x values to run, e.g. --only 1,128,512")
     parser.add_argument("--no-report", action="store_true", help="skip writing bench/RESULTS.md and SVG charts")
     args = parser.parse_args()
 
@@ -474,7 +469,6 @@ def main() -> None:
     for sweep in [s.strip() for s in args.sweep.split(",") if s.strip()]:
         print_header(sweep)
         cases = [c for c in plan[sweep] if not args.only or str(c.x) in args.only.split(",")]
-        # Group consecutive cases that share the same Stack configuration (e.g. same worker fleet in `scaling`).
         idx = 0
         while idx < len(cases):
             first = cases[idx]
@@ -484,13 +478,13 @@ def main() -> None:
             while idx < len(cases) and _stack_key(cases[idx]) == key:
                 group.append(cases[idx])
                 idx += 1
-            slug = f"{sweep}-{first.workload}-w{first.py_workers}-m{int(first.dedup_memory)}-{first.x}"
+            slug = f"{sweep}-{first.workload}-w{first.py_workers}-k{first.worker_concurrency}-m{int(first.dedup_memory)}-{first.x}"
             with Stack(first, BENCH / "data" / slug) as stack:
                 for case in group:
                     r = asyncio.run(drive(stack, case, args.budget, args.rounds))
                     print_row(r)
                     if args.rounds or sweep == "history":
-                        print(f"{DIM}{'':>22} p50 per burst: {r.round_p50_ms}{RESET}")
+                        print(f"{DIM}{'':>24} p50 per burst: {r.round_p50_ms}{RESET}")
                     results.append(r)
 
     path = save(results, info)
