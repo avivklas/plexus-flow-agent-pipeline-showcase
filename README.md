@@ -270,7 +270,7 @@ curl -X POST http://127.0.0.1:8080/api/v1/workflows/<workflow-id>/signal \
 
 ## How does it scale?
 
-[`bench/`](bench/) measures how latency responds to worker slots (`--max-concurrency`), worker fleet size, parallel workflow bursts, pipeline DAG size, and engine uptime, using the real 10-step pipeline with the mock model. Headline: **2.6 ms p50 (`0.33 ms/step`) for the whole 10-step pipeline** at low load, **1,024 concurrent workflows within 1.5× baseline p95 (`1,465 ms` vs. `1,075 ms` baseline at `150 ms`/step)** across 8 workers × 128 slots (`651.7 wf/s`), and a single-node coordinator ceiling of **1,074 workflows/s (10,736 steps/s)** with single-commit atomic step advancement and automatic `ActivityStore` pruning. See [bench/README.md](bench/README.md) for the findings and [bench/RESULTS.md](bench/RESULTS.md) for charts.
+[`bench/`](bench/) measures how latency responds to worker slots (`--max-concurrency`), worker fleet size, parallel workflow bursts, pipeline DAG size, and engine uptime, using the real 10-step pipeline with the mock model. Headline: **2.7 ms p50 (`0.33 ms/step`) for the whole 10-step pipeline** at low load, **1,024 concurrent workflows within 1.5× baseline p95 (`1,474 ms` vs. `1,075 ms` baseline at `150 ms`/step)** across 8 workers × 128 slots (`646.4 wf/s`), and a single-node coordinator ceiling of **1,085 workflows/s (10,849 steps/s)** with single-commit atomic step advancement and automatic `ActivityStore` pruning. See [bench/README.md](bench/README.md) for the findings and [bench/RESULTS.md](bench/RESULTS.md) for charts.
 
 ```bash
 uv run python bench/bench.py --quick

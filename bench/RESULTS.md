@@ -1,8 +1,8 @@
 # Benchmark: How Worker Slots, Fleet Size & Load Affect Workflow Latency
 
-Generated from [`20261017-130204.json`](results/20261017-130204.json) by `bench/report.py`.
+Generated from [`20261017-135612.json`](results/20261017-135612.json) by `bench/report.py`.
 
-**Machine:** Apple M5 Pro · 15 cores · Darwin 25.6.0 · Go go1.27.0 darwin/arm64 · Python 3.13.13 · plexus-flow `0f949cc (feat/scalability-and-execution-primitives) + uncommitted changes` · 2026-10-17T12:55:18
+**Machine:** Apple M5 Pro · 15 cores · Darwin 25.6.0 · Go go1.27.0 darwin/arm64 · Python 3.13.13 · plexus-flow `aa8cc48 (main)` · 2026-10-17T13:49:26
 
 ## What is a "Slot" (`--max-concurrency`)?
 
@@ -17,12 +17,12 @@ Because LLM and tool steps are I/O-bound (`150 ms` per step), a single worker pr
 
 ![Single Worker: Slots per Worker vs p95 Latency](charts/slots_latency_p95.svg)
 
-| Slots per worker (1 process/kind) | Max parallel flows (**p95 ≤ 1.5× / 1607 ms**) | Max parallel flows (**p95 ≤ 2.0× / 2142 ms**) | Peak throughput | Peak step rate |
+| Slots per worker (1 process/kind) | Max parallel flows (**p95 ≤ 1.5× / 1609 ms**) | Max parallel flows (**p95 ≤ 2.0× / 2145 ms**) | Peak throughput | Peak step rate |
 |---|---:|---:|---:|---:|
 | **8 slots/worker** | **7 parallel flows** | **13 parallel flows** | **7.5 wf/s** | 75 steps/s |
 | **32 slots/worker** | **35 parallel flows** | **54 parallel flows** | **29.7 wf/s** | 297 steps/s |
-| **64 slots/worker** | **69 parallel flows** | **102 parallel flows** | **58.8 wf/s** | 588 steps/s |
-| **128 slots/worker** | **141 parallel flows** | **217 parallel flows** | **112.3 wf/s** | 1,123 steps/s |
+| **64 slots/worker** | **70 parallel flows** | **108 parallel flows** | **58.9 wf/s** | 589 steps/s |
+| **128 slots/worker** | **140 parallel flows** | **206 parallel flows** | **108.7 wf/s** | 1,087 steps/s |
 
 ## 2. Scaling Worker Fleet at `128` Slots/Worker (Up to `1,024` Parallel Workflows)
 
@@ -38,55 +38,55 @@ Because LLM and tool steps are I/O-bound (`150 ms` per step), a single worker pr
 
 ### Capacity Sizing Table (`128` Slots/Worker, `150 ms`/Step)
 
-| Worker fleet (`py` + `go`) | Total slots/kind | Max parallel flows (**p95 ≤ 1.5× / 1613 ms**) | Max parallel flows (**p95 ≤ 2.0× / 2150 ms**) | Peak throughput | Peak step rate | Fleet speedup |
+| Worker fleet (`py` + `go`) | Total slots/kind | Max parallel flows (**p95 ≤ 1.5× / 1612 ms**) | Max parallel flows (**p95 ≤ 2.0× / 2150 ms**) | Peak throughput | Peak step rate | Fleet speedup |
 |---|---:|---:|---:|---:|---:|---:|
-| **1 worker** | 128 slots | **141 parallel flows** | **217 parallel flows** | **114.2 wf/s** | 1,142 steps/s | **1.0×** |
-| **2 workers** | 256 slots | **285 parallel flows** | **436 parallel flows** | **208.8 wf/s** | 2,088 steps/s | **1.8×** |
-| **4 workers** | 512 slots | **574 parallel flows** | **844 parallel flows** | **390.3 wf/s** | 3,903 steps/s | **3.4×** |
-| **8 workers** | 1,024 slots | **1024 parallel flows** | **1024 parallel flows** | **651.7 wf/s** | 6,517 steps/s | **5.7×** |
+| **1 worker** | 128 slots | **141 parallel flows** | **218 parallel flows** | **117.4 wf/s** | 1,174 steps/s | **1.0×** |
+| **2 workers** | 256 slots | **281 parallel flows** | **412 parallel flows** | **221.7 wf/s** | 2,217 steps/s | **1.9×** |
+| **4 workers** | 512 slots | **578 parallel flows** | **874 parallel flows** | **391.5 wf/s** | 3,915 steps/s | **3.3×** |
+| **8 workers** | 1,024 slots | **1024 parallel flows** | **1024 parallel flows** | **646.4 wf/s** | 6,464 steps/s | **5.5×** |
 
 ### Full p95 Latency Matrix (ms) — Parallel Flows × Worker Fleet Size (`128` Slots/Worker)
 
 | Parallel workflows in flight | **1 worker** (128 slots) | **2 workers** (256 slots) | **4 workers** (512 slots) | **8 workers** (1,024 slots) |
 |---:|---:|---:|---:|---:|
-| **1** | 1073 ms ✅ | 1077 ms ✅ | 1075 ms ✅ | 1071 ms ✅ |
-| **16** | 1075 ms ✅ | 1079 ms ✅ | 1081 ms ✅ | 1082 ms ✅ |
-| **64** | 1224 ms ✅ | 1086 ms ✅ | 1083 ms ✅ | 1079 ms ✅ |
-| **128** | 1518 ms ✅ | 1225 ms ✅ | 1085 ms ✅ | 1080 ms ✅ |
-| **256** | 2428 ms ⏳ | 1510 ms ✅ | 1214 ms ✅ | 1092 ms ✅ |
-| **512** | 4517 ms ⏳ | 2420 ms ⏳ | 1489 ms ✅ | 1210 ms ✅ |
-| **1,024** | 8592 ms ⏳ | 4505 ms ⏳ | 2511 ms ⏳ | 1465 ms ✅ |
+| **1** | 1070 ms ✅ | 1075 ms ✅ | 1074 ms ✅ | 1075 ms ✅ |
+| **16** | 1075 ms ✅ | 1081 ms ✅ | 1081 ms ✅ | 1084 ms ✅ |
+| **64** | 1228 ms ✅ | 1082 ms ✅ | 1085 ms ✅ | 1087 ms ✅ |
+| **128** | 1519 ms ✅ | 1224 ms ✅ | 1086 ms ✅ | 1089 ms ✅ |
+| **256** | 2419 ms ⏳ | 1508 ms ✅ | 1210 ms ✅ | 1086 ms ✅ |
+| **512** | 4506 ms ⏳ | 2563 ms ⏳ | 1493 ms ✅ | 1218 ms ✅ |
+| **1,024** | 8617 ms ⏳ | 4392 ms ⏳ | 2423 ms ⏳ | 1474 ms ✅ |
 
-*Legend: ✅ within 1.5× baseline p95 (≤ 1613 ms) · ⚠️ within 2.0× baseline p95 (≤ 2150 ms) · ⏳ queueing regime.*
+*Legend: ✅ within 1.5× baseline p95 (≤ 1612 ms) · ⚠️ within 2.0× baseline p95 (≤ 2150 ms) · ⏳ queueing regime.*
 
 ## 3. Single-Node Engine Ceiling (0 ms Steps)
 
-When workers execute in **0 ms**, all measured latency is pure `plexus-flow` orchestration overhead (two Raft consensus groups, `flowstore` state transitions, gRPC task dispatch, and SSE completion notifications). A single coordinator node peaks at **1074 workflows/s (10,736 steps/s)**. Once your worker fleet produces more than ~11,000 step completions per second, the coordinator itself becomes the bottleneck.
+When workers execute in **0 ms**, all measured latency is pure `plexus-flow` orchestration overhead (two Raft consensus groups, `flowstore` state transitions, gRPC task dispatch, and SSE completion notifications). A single coordinator node peaks at **1058 workflows/s (10,585 steps/s)**. Once your worker fleet produces more than ~11,000 step completions per second, the coordinator itself becomes the bottleneck.
 
 ![Pure Engine Ceiling](charts/engine_ceiling.svg)
 
 | Parallel workflows in flight | Runs | p50 (median) | p95 | p99 (tail) | Max | Per step (p50) | Throughput (wf/s) | Step rate (steps/s) |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **1** | 30 | 2.6 ms | 3.5 ms | 3.9 ms | 4.1 ms | 0.33 ms | **366.4 wf/s** | **3,664 steps/s** |
-| **10** | 30 | 12.2 ms | 12.8 ms | 12.9 ms | 12.9 ms | 1.52 ms | **773.4 wf/s** | **7,734 steps/s** |
-| **50** | 100 | 46.9 ms | 51.6 ms | 52.6 ms | 53.2 ms | 5.87 ms | **932.5 wf/s** | **9,325 steps/s** |
-| **100** | 200 | 87.8 ms | 92.3 ms | 93.8 ms | 96.4 ms | 10.97 ms | **991.0 wf/s** | **9,910 steps/s** |
-| **250** | 500 | 207.0 ms | 211.5 ms | 211.9 ms | 213.2 ms | 25.88 ms | **1065.0 wf/s** | **10,650 steps/s** |
-| **500** | 1000 | 402.2 ms | 427.4 ms | 428.8 ms | 430.7 ms | 50.27 ms | **1073.6 wf/s** | **10,736 steps/s** |
-| **1,000** | 2000 | 782.8 ms | 858.3 ms | 867.6 ms | 877.9 ms | 97.85 ms | **1073.3 wf/s** | **10,733 steps/s** |
+| **1** | 30 | 2.7 ms | 3.5 ms | 6.4 ms | 7.5 ms | 0.33 ms | **346.9 wf/s** | **3,469 steps/s** |
+| **10** | 30 | 10.8 ms | 13.9 ms | 13.9 ms | 13.9 ms | 1.34 ms | **778.7 wf/s** | **7,787 steps/s** |
+| **50** | 100 | 47.1 ms | 52.0 ms | 52.8 ms | 53.1 ms | 5.88 ms | **921.3 wf/s** | **9,213 steps/s** |
+| **100** | 200 | 89.5 ms | 96.0 ms | 96.8 ms | 98.4 ms | 11.18 ms | **981.5 wf/s** | **9,815 steps/s** |
+| **250** | 500 | 201.4 ms | 220.4 ms | 222.3 ms | 225.2 ms | 25.17 ms | **1056.0 wf/s** | **10,560 steps/s** |
+| **500** | 1000 | 407.5 ms | 437.4 ms | 438.7 ms | 441.7 ms | 50.94 ms | **1058.5 wf/s** | **10,585 steps/s** |
+| **1,000** | 2000 | 808.8 ms | 848.5 ms | 856.8 ms | 865.5 ms | 101.10 ms | **1052.0 wf/s** | **10,520 steps/s** |
 
 ## 4. Sustained Throughput Over Time (`dedup.db` vs. In-Memory Dedup)
 
 Running identical bursts of 50 workflows back-to-back on a single engine isolates how state accumulation affects latency:
-- **`in-memory dedup` (green line):** p50 latency stays completely flat (~40–48 ms at `50` concurrent workflows, **1,064.4 wf/s** / **10,644 steps/s**) across 800 cumulative workflows (with automatic `ActivityStore` pruning of terminal workflows).
+- **`in-memory dedup` (green line):** p50 latency stays completely flat (~40–47 ms at `50` concurrent workflows, **1,084.9 wf/s** / **10,849 steps/s**) across 800 cumulative workflows (with automatic `ActivityStore` pruning of terminal workflows).
 - **`dedup.db (file store)` (red line):** `plexus`'s default `dedup.FileStore` serializes and rewrites its entire JSON snapshot on every dispatched step, causing latency to grow linearly with total historical steps executed.
 
 ![Sustained History: In-Memory vs dedup.db](charts/history_dedup.svg)
 
 | Dedup store | Cumulative workflows | First burst p50 | Final burst p50 | Overall p50 | Overall p99 | Avg throughput |
 |---|---:|---:|---:|---:|---:|---:|
-| **in-memory dedup** | 800 | 47.5 ms | 40.7 ms | 41.5 ms | 49.3 ms | 1064.4 wf/s |
-| **dedup.db (file store)** | 800 | 159.9 ms | 1275.5 ms | 703.0 ms | 1319.0 ms | 66.2 wf/s |
+| **in-memory dedup** | 800 | 46.9 ms | 40.7 ms | 41.1 ms | 48.3 ms | 1084.9 wf/s |
+| **dedup.db (file store)** | 800 | 155.4 ms | 1233.4 ms | 679.2 ms | 1275.5 ms | 67.0 wf/s |
 
 ## 5. Pipeline DAG Size (Steps per Workflow)
 
@@ -96,8 +96,8 @@ How workflow complexity affects orchestration cost at 10 concurrent workflows in
 
 | Steps per workflow | Critical path | Runs | p50 | p95 | p99 | Per step (p50) | Throughput (wf/s) | Step rate (steps/s) |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **10*** | 8 stages | 30 | 11.9 ms | 14.1 ms | 14.6 ms | 1.49 ms | 741.5 wf/s | 7,415 steps/s |
-| **12** | 6 stages | 30 | 12.4 ms | 15.1 ms | 16.4 ms | 2.07 ms | 664.0 wf/s | 7,968 steps/s |
-| **24** | 12 stages | 30 | 28.2 ms | 31.8 ms | 32.0 ms | 2.35 ms | 321.7 wf/s | 7,722 steps/s |
-| **48** | 24 stages | 30 | 82.7 ms | 90.1 ms | 90.5 ms | 3.45 ms | 114.1 wf/s | 5,478 steps/s |
-| **100** | 50 stages | 30 | 284.1 ms | 305.7 ms | 306.8 ms | 5.68 ms | 34.0 wf/s | 3,404 steps/s |
+| **10*** | 8 stages | 30 | 12.2 ms | 14.3 ms | 14.5 ms | 1.53 ms | 733.4 wf/s | 7,334 steps/s |
+| **12** | 6 stages | 30 | 11.7 ms | 13.7 ms | 13.8 ms | 1.95 ms | 742.2 wf/s | 8,906 steps/s |
+| **24** | 12 stages | 30 | 29.0 ms | 33.7 ms | 33.7 ms | 2.41 ms | 313.7 wf/s | 7,529 steps/s |
+| **48** | 24 stages | 30 | 80.0 ms | 87.5 ms | 88.0 ms | 3.33 ms | 117.9 wf/s | 5,657 steps/s |
+| **100** | 50 stages | 30 | 284.5 ms | 303.2 ms | 304.0 ms | 5.69 ms | 33.9 wf/s | 3,393 steps/s |

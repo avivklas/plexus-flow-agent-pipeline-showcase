@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 420" width="100%" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px;">
 <text x="80" y="30" font-size="16" font-weight="700" fill="#111827">How Many Parallel Flows Can You Run at 128 Slots/Worker Without Hurting Latency?</text>
-<text x="80" y="50" font-size="12" fill="#4b5563">Max parallel workflows supported while keeping p95 latency ≤ 1.5× (1613 ms) or ≤ 2.0× (2150 ms) of single-flow baseline (1075 ms).</text>
+<text x="80" y="50" font-size="12" fill="#4b5563">Max parallel workflows supported while keeping p95 latency ≤ 1.5× (1612 ms) or ≤ 2.0× (2150 ms) of single-flow baseline (1075 ms).</text>
 <rect x="80" y="63" width="14" height="14" rx="3" fill="#16a34a"/>
-<text x="100" y="74" font-size="12" font-weight="600" fill="#1f2937">Strict SLA: p95 ≤ 1.5× baseline (1613 ms)</text>
+<text x="100" y="74" font-size="12" font-weight="600" fill="#1f2937">Strict SLA: p95 ≤ 1.5× baseline (1612 ms)</text>
 <rect x="401.0" y="63" width="14" height="14" rx="3" fill="#2563eb"/>
 <text x="421.0" y="74" font-size="12" font-weight="600" fill="#1f2937">Relaxed SLA: p95 ≤ 2.0× baseline (2150 ms)</text>
 <line x1="80" y1="358.0" x2="880" y2="358.0" stroke="#d1d5db" stroke-width="1"/>
@@ -20,18 +20,18 @@
 <text x="180.0" y="380" font-size="12" font-weight="600" fill="#374151" text-anchor="middle">1 worker (128 slots)</text>
 <rect x="136.0" y="327.6" width="42.0" height="30.4" rx="3" fill="#16a34a"/>
 <text x="157.0" y="321.6" font-size="11" font-weight="700" fill="#16a34a" text-anchor="middle">141 wf</text>
-<rect x="182.0" y="311.4" width="42.0" height="46.6" rx="3" fill="#2563eb"/>
-<text x="203.0" y="305.4" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">217 wf</text>
+<rect x="182.0" y="311.2" width="42.0" height="46.8" rx="3" fill="#2563eb"/>
+<text x="203.0" y="305.2" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">218 wf</text>
 <text x="380.0" y="380" font-size="12" font-weight="600" fill="#374151" text-anchor="middle">2 workers (256 slots)</text>
-<rect x="336.0" y="296.7" width="42.0" height="61.3" rx="3" fill="#16a34a"/>
-<text x="357.0" y="290.7" font-size="11" font-weight="700" fill="#16a34a" text-anchor="middle">285 wf</text>
-<rect x="382.0" y="264.2" width="42.0" height="93.8" rx="3" fill="#2563eb"/>
-<text x="403.0" y="258.2" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">436 wf</text>
+<rect x="336.0" y="297.5" width="42.0" height="60.5" rx="3" fill="#16a34a"/>
+<text x="357.0" y="291.5" font-size="11" font-weight="700" fill="#16a34a" text-anchor="middle">281 wf</text>
+<rect x="382.0" y="269.5" width="42.0" height="88.5" rx="3" fill="#2563eb"/>
+<text x="403.0" y="263.5" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">412 wf</text>
 <text x="580.0" y="380" font-size="12" font-weight="600" fill="#374151" text-anchor="middle">4 workers (512 slots)</text>
-<rect x="536.0" y="234.6" width="42.0" height="123.4" rx="3" fill="#16a34a"/>
-<text x="557.0" y="228.6" font-size="11" font-weight="700" fill="#16a34a" text-anchor="middle">574 wf</text>
-<rect x="582.0" y="176.6" width="42.0" height="181.4" rx="3" fill="#2563eb"/>
-<text x="603.0" y="170.6" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">844 wf</text>
+<rect x="536.0" y="233.8" width="42.0" height="124.2" rx="3" fill="#16a34a"/>
+<text x="557.0" y="227.8" font-size="11" font-weight="700" fill="#16a34a" text-anchor="middle">578 wf</text>
+<rect x="582.0" y="170.2" width="42.0" height="187.8" rx="3" fill="#2563eb"/>
+<text x="603.0" y="164.2" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">874 wf</text>
 <text x="780.0" y="380" font-size="12" font-weight="600" fill="#374151" text-anchor="middle">8 workers (1024 slots)</text>
 <rect x="736.0" y="137.8" width="42.0" height="220.2" rx="3" fill="#16a34a"/>
 <text x="757.0" y="131.8" font-size="11" font-weight="700" fill="#16a34a" text-anchor="middle">1,024 wf</text>
