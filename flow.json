@@ -14,6 +14,7 @@
       "depends_on": ["triage", "kb-research", "account-lookup", "sentiment"] },
 
     { "name": "issue-refund",    "activity": "issue-refund",      "retries": 3, "timeout": "10s",
+      "when": { "source": "resolution-plan", "field": "refund_amount", "op": "gt", "value": 0 },
       "compensating_action": "reverse-refund", "depends_on": ["resolution-plan"] },
 
     { "name": "draft-reply",     "activity": "draft-reply-agent", "retries": 3, "timeout": "60s",

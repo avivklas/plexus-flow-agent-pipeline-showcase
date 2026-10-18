@@ -118,29 +118,34 @@ func workflowID(ctx context.Context) string {
 	return ""
 }
 
+// ReverseRefundResult is the output of reverse-refund.
+type ReverseRefundResult struct {
+	Reversed bool   `json:"reversed"`
+	RefundID string `json:"refund_id,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
 // IssueRefund executes the refund the planner proposed.
-func IssueRefund(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+func IssueRefund(ctx context.Context, t Ticket) (Refund, error) {
 	if err := benchSleep(ctx); err != nil {
-		return nil, err
+		return Refund{}, err
 	}
-	var t Ticket
-	_ = json.Unmarshal(input, &t)
 	plan, err := dep[Plan](ctx, "resolution-plan")
 	if err != nil {
-		return nil, err
+		return Refund{}, err
 	}
 	wf := workflowID(ctx)
 
 	if plan.RefundAmount <= 0 {
 		logf(cyan, "Payments", "%s: plan %q needs no refund, nothing to do", t.TicketID, plan.Action)
-		return json.Marshal(Refund{Skipped: true, WorkflowID: wf})
+		return Refund{Skipped: true, WorkflowID: wf}, nil
 	}
 
 	ledger.Lock()
 	defer ledger.Unlock()
 	if r, ok := ledger.refunds[wf]; ok { // idempotent: same workflow, same refund
 		logf(yellow, "Payments", "%s: refund %s already issued, returning it (idempotent)", t.TicketID, r.RefundID)
-		return json.Marshal(r)
+		return *r, nil
 	}
 	r := &Refund{
 		RefundID:   fmt.Sprintf("RF-%d", time.Now().UnixNano()%1_000_000),
@@ -154,17 +159,13 @@ func IssueRefund(ctx context.Context, input json.RawMessage) (json.RawMessage, e
 	ledger.issued += r.Amount
 	logf(green, "Payments", "%s: 💸 refund %s of %s$%.2f%s issued to %s (order %s) | ledger total $%.2f",
 		t.TicketID, r.RefundID, bold, r.Amount, reset, r.CustomerID, r.OrderID, ledger.issued)
-	return json.Marshal(r)
+	return *r, nil
 }
 
 // ReverseRefund undoes IssueRefund. Its input is the output of IssueRefund.
-func ReverseRefund(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
-	var r Refund
-	if err := json.Unmarshal(input, &r); err != nil {
-		return nil, worker.NonRetryable(err)
-	}
+func ReverseRefund(ctx context.Context, r Refund) (ReverseRefundResult, error) {
 	if r.Skipped || r.RefundID == "" {
-		return json.Marshal(map[string]any{"reversed": false, "reason": "nothing was refunded"})
+		return ReverseRefundResult{Reversed: false, Reason: "nothing was refunded"}, nil
 	}
 	ledger.Lock()
 	defer ledger.Unlock()
@@ -174,5 +175,5 @@ func ReverseRefund(ctx context.Context, input json.RawMessage) (json.RawMessage,
 	}
 	logf(purple, "Payments ↩ COMPENSATION", "refund %s of $%.2f reversed for %s | ledger total $%.2f",
 		r.RefundID, r.Amount, r.CustomerID, ledger.issued)
-	return json.Marshal(map[string]any{"reversed": true, "refund_id": r.RefundID})
+	return ReverseRefundResult{Reversed: true, RefundID: r.RefundID}, nil
 }

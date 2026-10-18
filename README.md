@@ -9,10 +9,10 @@
 >
 > Let the model think freely *inside* a step. Let [plexus-flow](https://github.com/avivklas/plexus-flow) own everything *between* steps: ordering, parallelism, retries, timeouts, the human approval gate, and undoing what agents did when someone says no.
 
-This showcase is a **support ticket resolver**: seven LLM agents plus two side-effecting tools. A refund is issued, then a guardrail or a human can still veto it, and plexus-flow reverses the refund automatically. It runs offline with a deterministic mock model, or against any OpenAI-compatible endpoint.
+This showcase is a **support ticket resolver**: seven LLM agents plus two side-effecting tools. A refund is issued conditionally (`when: resolution-plan.refund_amount > 0`), then a guardrail or a human can still veto it, and plexus-flow reverses the refund automatically—or you can time-travel replay from any step with a patched payload without re-running upstream LLM calls. It runs offline with a deterministic mock model, or against any OpenAI-compatible endpoint.
 
 ```bash
-./run_showcase.sh                 # all 6 scenarios in a few seconds, zero API keys
+./run_showcase.sh                 # all 8 scenarios in a few seconds, zero API keys
 ./run_showcase.sh --interactive   # you are the human reviewer
 ```
 
@@ -31,7 +31,8 @@ This showcase is a **support ticket resolver**: seven LLM agents plus two side-e
   "retry_policy": { "non_retryable_error_codes": ["UNKNOWN_CUSTOMER", "UNKNOWN_ORDER", "LLM_BAD_REQUEST"] } },
 { "name": "sentiment",       "activity": "sentiment-agent",   "retries": 3, "timeout": "60s", "depends_on": ["triage"] },
 { "name": "resolution-plan", "activity": "planner-agent",     "depends_on": ["triage", "kb-research", "account-lookup", "sentiment"] },
-{ "name": "issue-refund",    "activity": "issue-refund",      "compensating_action": "reverse-refund", "depends_on": ["resolution-plan"] },
+{ "name": "issue-refund",    "activity": "issue-refund",      "compensating_action": "reverse-refund", "depends_on": ["resolution-plan"],
+  "when": { "source": "resolution-plan", "field": "refund_amount", "op": "gt", "value": 0 } },
 { "name": "draft-reply",     "activity": "draft-reply-agent", "depends_on": ["resolution-plan", "issue-refund"] },
 { "name": "guardrail",       "activity": "guardrail-agent",   "depends_on": ["resolution-plan", "draft-reply"],
   "retry_policy": { "non_retryable_error_codes": ["POLICY_VIOLATION", "LLM_BAD_REQUEST"] } },
@@ -47,8 +48,9 @@ flowchart LR
   K --> P[resolution-plan]
   A --> P
   S --> P
-  P --> R["issue-refund (Go tool)"]
-  R --> D[draft-reply]
+  P -->|"when refund_amount > 0"| R["issue-refund (Go tool)"]
+  P -->|"when refund_amount == 0 (SKIPPED)"| D[draft-reply]
+  R --> D
   D --> G[guardrail]
   G --> H["await-approval (human)"]
   H --> X["send-reply (Go tool)"]
@@ -61,13 +63,16 @@ flowchart LR
 | Concern in an agent system | In this repo | What you'd otherwise build |
 |---|---|---|
 | Run sub-agents in parallel, then join | `depends_on` | asyncio fan-out/fan-in, partial-failure handling |
+| Conditional branching without replay determinism bugs | `"when": {"source": "resolution-plan", "field": "refund_amount", "op": "gt", "value": 0}` | Temporal `workflow.GetVersion` gates or scattered `if` branches across workers |
 | Pass context between agents | `ctx.dependency_outputs` | a state object threaded through a graph framework |
 | LLM rate limits (429), exponential backoff & non-retryable errors | `"retries": 5` + `"retry_policy"` | tenacity decorators, backoff timers, error-code filters |
 | A model call that hangs | `"timeout": "60s"` | cancellation plumbing, watchdogs |
 | Human approval | `"kind": "wait_signal"` | a DB table of pending approvals, a poller, a resume path |
 | No one approves in time | `"timeout"` on the signal step | cron jobs that expire stale approvals ($O(\log N)$ min-heap timers) |
 | Undo what an agent already did | `"compensating_action"` | hand-written rollback code for every failure path |
-| Process crashes mid-run (or mid-step) | Raft state + `ctx.report_progress(...)` / `ctx.last_progress` | checkpointing tables, idempotency keys, replay logic |
+| Fix & re-run a failed step without paying for upstream LLM calls twice | `POST /api/v1/workflows/{id}/replay` (`replay_step`) | manual state surgery or re-running the entire pipeline from scratch |
+| Process crashes mid-run (or mid-step) & zombie workers | Raft state + `Attempt`/`RunID` fencing + `ctx.report_progress(...)` | checkpointing tables, fencing tokens, idempotency keys |
+| Zero-CDC search & live facets across workflows | `GET /api/v1/workflows/search` (`search_workflows`) | Elasticsearch/OpenSearch + Kafka CDC pipelines |
 | Recurring scheduled runs & cold archival | `POST /api/v1/schedules` & `POST /api/v1/workflows/compact` | external cron runners, DB archival & retention jobs |
 | See what happened in real time | dashboard at `/` + SSE `/watch` | tracing infrastructure, log correlation, polling loops |
 
@@ -119,9 +124,9 @@ Three design rules make it safe to let LLMs act:
 
 ---
 
-## The six scenarios
+## The eight scenarios
 
-`./run_showcase.sh` runs them all. Output below is abridged from a real run.
+`./run_showcase.sh` runs them all, followed by a sub-millisecond zero-CDC faceted search query over the completed and compensated workflows. Output below is abridged from a real run.
 
 ### 1. `happy`: parallel research, refund, approval, reply
 
@@ -139,7 +144,19 @@ Three design rules make it safe to let LLMs act:
 ✔ COMPLETED
 ```
 
-### 2. `flaky-llm`: the provider rate-limits you
+### 2. `warranty-skip`: declarative `when` guard skips `issue-refund`
+
+```text
+[kb-research-agent] TCK-1005: plexus-search → KB-107 "Warranty claims for faulty products"
+[planner-agent] TCK-1005: escalate $0.00 (policy KB-107, cap $0)
+  • resolution-plan  COMPLETED
+  • issue-refund     SKIPPED (when resolution-plan.refund_amount gt 0 → false)
+  • draft-reply      RUNNING
+[draft-reply-agent] TCK-1005: drafted "Re: Espresso machine stopped working under warranty"
+✔ COMPLETED: warranty escalation sent; issue-refund skipped declaratively (`when` guard).
+```
+
+### 3. `flaky-llm`: the provider rate-limits you
 
 ```text
     ⚠ kb-research: provider returned 429 Too Many Requests (attempt 1)
@@ -152,7 +169,7 @@ Three design rules make it safe to let LLMs act:
 
 The other two parallel agents were never affected, and nothing upstream re-ran.
 
-### 3. `guardrail`: the draft over-promises, money comes back
+### 4. `guardrail`: the draft over-promises, money comes back
 
 ```text
 [Payments] TCK-1003: 💸 refund RF-531000 of $119.00 issued to CUST-7781
@@ -161,7 +178,27 @@ The other two parallel agents were never affected, and nothing upstream re-ran.
 ↩ COMPENSATED (POLICY_VIOLATION)
 ```
 
-### 4. `human-reject`: the reviewer sees what agents missed
+### 5. `guardrail-replay`: time-travel step replay with patched input
+
+```text
+↩ COMPENSATED (POLICY_VIOLATION)
+⏪ [time-travel replay] replaying workflow TCK-1003-guardrail-replay from 'draft-reply' with clean input
+[Payments] TCK-1003: 💸 refund RF-842000 of $119.00 issued to CUST-7781
+[draft-reply-agent] TCK-1003: drafted "Re: Charged twice for my subscription!!" (48 words)
+[guardrail-agent] TCK-1003: ✅ reply is within policy
+✔ COMPLETED
+
+  LLM call ledger (one line per model call):
+    triage           1 call(s)  ✓ once (cached in Raft)
+    kb-research      1 call(s)  ✓ once (cached in Raft)
+    account-lookup   1 call(s)  ✓ once (cached in Raft)
+    sentiment        1 call(s)  ✓ once (cached in Raft)
+    resolution-plan  1 call(s)  ✓ once (cached in Raft)
+    draft-reply      2 call(s)  ← replayed after input patch
+    guardrail        2 call(s)  ← replayed after input patch
+```
+
+### 6. `human-reject`: the reviewer sees what agents missed
 
 ```text
 │ action: goodwill_partial_refund  refund: $44.75  flags: ['repeat_refunds']
@@ -172,7 +209,7 @@ The other two parallel agents were never affected, and nothing upstream re-ran.
 
 A signal payload isn't a failure. `send-reply` turns `approved: false` into a permanent failure with one `if`, and the saga does the rest.
 
-### 5. `crash-resume`: SIGKILL the agent worker mid-run
+### 7. `crash-resume`: SIGKILL the agent worker mid-run
 
 ```text
   • draft-reply      RUNNING
@@ -195,7 +232,7 @@ A signal payload isn't a failure. `send-reply` turns `approved: false` into a pe
 
 Five finished LLM calls were not paid for twice, the in-flight step resumed with its last heartbeat checkpoint (`ctx.last_progress`), and the refund was not issued twice. Results are committed through Raft, and the refund tool is idempotent per workflow.
 
-### 6. `timeout`: nobody answers
+### 8. `timeout`: nobody answers
 
 ```text
   • await-approval   FAILED
@@ -227,7 +264,7 @@ avivklas/
 ./run_showcase.sh --no-block               # exit when done instead of keeping services up
 ```
 
-Then open **http://127.0.0.1:8080** for the flow graph (with failure and compensation edges) and a trace of every run.
+Then open **http://127.0.0.1:8080** for the flow graph (with failure, conditional `when`, and compensation edges), live zero-CDC faceted search, and one-click step replay.
 
 If the default ports are busy, override them:
 
@@ -283,9 +320,9 @@ flow.json              the pipeline (the only orchestration code)
 python/agents.py       7 agents, each a plain async function
 python/llm.py          mock + OpenAI-compatible backend, chaos injection, call ledger
 python/kb.py           plexus-search client with in-memory fallback, seeding CLI
-python/launcher.py     scenarios: submit tickets, act as reviewer, kill/restart the worker
-go/tools/refund.go     issue-refund / reverse-refund (idempotent ledger)
-go/tools/reply.go      send-reply / retract-reply
+python/launcher.py     scenarios: submit tickets, act as reviewer, replay steps, kill/restart worker
+go/tools/refund.go     issue-refund / reverse-refund (typed Go structs, idempotent ledger)
+go/tools/reply.go      send-reply / retract-reply (typed Go structs)
 kb/*.md                support policy articles (indexed into plexus-search)
 fixtures/              customers and tickets
 run_showcase.sh        build, boot, seed, run
@@ -294,6 +331,6 @@ bench/                 scale benchmark: driver, report generator, results
 
 ## Honest limits
 
-- **The DAG is fixed per workflow.** plexus-flow has no conditional branches, loops, or fan-out sized by the model at runtime. Put loops inside a step (an agent's tool-use loop) and keep the graph declarative. Bounded critique→revise cycles can be unrolled into explicit steps.
+- **Declarative conditional branching (`when`), no unbounded runtime cycles.** Steps can branch conditionally on input, metadata, or upstream step outputs (`when`), and untaken branches are marked `SKIPPED` while downstream join steps advance. Put open-ended loops inside a step (an agent's tool-use loop) and keep the graph between steps a declarative DAG.
 - **Durations.** The engine's JSON uses nanoseconds. `flow.json` uses readable strings (`"60s"`, `"100ms"`), and the launcher converts them (`to_ns` in `launcher.py`).
 - **The tools are simulations.** The ledger and outbox live in memory in the Go worker. Swap in Stripe and your helpdesk API, keeping the idempotency key (the workflow ID).

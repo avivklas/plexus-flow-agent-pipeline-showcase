@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from plexus_flow import watch_workflow
+from plexus_flow import replay_step, search_workflows, watch_workflow
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import llm  # noqa: E402  (for the call ledger)
@@ -33,7 +33,10 @@ ROOT = Path(__file__).resolve().parent.parent
 CYAN, GREEN, YELLOW, RED, PURPLE, BOLD, DIM, RESET = (
     "\033[36m", "\033[32m", "\033[33m", "\033[31m", "\033[35m", "\033[1m", "\033[2m", "\033[0m")
 TERMINAL = {"COMPLETED", "FAILED", "COMPENSATED", "CANCELLED", "COMPENSATION_FAILED"}
-STATUS_COLOR = {"RUNNING": CYAN, "COMPLETED": GREEN, "FAILED": RED, "COMPENSATING": PURPLE, "COMPENSATED": YELLOW}
+STATUS_COLOR = {
+    "RUNNING": CYAN, "COMPLETED": GREEN, "FAILED": RED,
+    "COMPENSATING": PURPLE, "COMPENSATED": YELLOW, "SKIPPED": DIM,
+}
 
 SCENARIOS: dict[str, dict[str, Any]] = {
     "happy": {
@@ -41,6 +44,12 @@ SCENARIOS: dict[str, dict[str, Any]] = {
         "ticket": "damaged-espresso.json",
         "decision": {"approved": True, "reviewer": "dana@support", "note": "Looks good"},
         "story": "Parallel agents research the ticket, a refund is issued, a human approves, the reply is sent.",
+    },
+    "warranty-skip": {
+        "title": "CONDITIONAL BRANCHING: warranty claim skips issue-refund via `when` guard",
+        "ticket": "warranty-espresso.json",
+        "decision": {"approved": True, "reviewer": "dana@support", "note": "Warranty escalation approved"},
+        "story": "Policy KB-107 has auto_refund_cap=0. `when: resolution-plan.refund_amount > 0` skips issue-refund automatically while downstream steps still run.",
     },
     "flaky-llm": {
         "title": "FLAKY LLM PROVIDER: late delivery, kb-research gets 429s",
@@ -54,6 +63,14 @@ SCENARIOS: dict[str, dict[str, Any]] = {
         "ticket": "double-charge.json",
         "chaos": {"off_policy_draft": True},
         "story": "The draft promises a free month and an extra $50. The guardrail vetoes it, and the already-issued refund is reversed automatically.",
+    },
+    "guardrail-replay": {
+        "title": "TIME-TRAVEL STEP REPLAY: patch off-policy draft and replay without re-running research",
+        "ticket": "double-charge.json",
+        "chaos": {"off_policy_draft": True},
+        "replay_from": "draft-reply",
+        "decision": {"approved": True, "reviewer": "dana@support", "note": "Approved after replay"},
+        "story": "After guardrail veto + compensation, replay from draft-reply with a clean payload: 5 upstream LLM calls stay COMPLETED and are never repeated.",
     },
     "human-reject": {
         "title": "HUMAN REJECTS: repeat refunder",
@@ -76,7 +93,7 @@ SCENARIOS: dict[str, dict[str, Any]] = {
         "story": "No reviewer responds within the approval window (shortened to 3s for the demo). SIGNAL_TIMEOUT rolls the refund back.",
     },
 }
-ALL = ["happy", "flaky-llm", "guardrail", "human-reject", "crash-resume", "timeout"]
+ALL = ["happy", "warranty-skip", "flaky-llm", "guardrail", "guardrail-replay", "human-reject", "crash-resume", "timeout"]
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +142,8 @@ class Runner:
 
     def run(self, name: str) -> str:
         sc = SCENARIOS[name]
-        ticket = json.loads((ROOT / "fixtures" / "tickets" / sc["ticket"]).read_text())
+        base_ticket = json.loads((ROOT / "fixtures" / "tickets" / sc["ticket"]).read_text())
+        ticket = dict(base_ticket)
         if sc.get("chaos"):
             ticket["chaos"] = sc["chaos"]
         wf_id = f"{ticket['ticket_id']}-{name}-{int(time.time() * 1000) % 100000}"
@@ -142,9 +160,22 @@ class Runner:
         print(f"{CYAN}[helpdesk]{RESET} ticket {ticket['ticket_id']} submitted as workflow {BOLD}{wf_id}{RESET}")
 
         seen: dict[str, tuple[str, int]] = {}
+        wf = self._watch_until_terminal(wf_id, sc, seen)
+
+        if replay_from := sc.get("replay_from"):
+            print(f"\n{PURPLE}{BOLD}⏪ [time-travel replay] replaying workflow {wf_id} from '{replay_from}' with clean input (chaos removed){RESET}")
+            replay_step(self.api, wf_id, replay_from, patched_input=base_ticket)
+            # Clear seen state for replayed steps so their new transitions print cleanly
+            for k in list(seen):
+                if k in ("issue-refund", "draft-reply", "guardrail", "await-approval", "send-reply"):
+                    seen.pop(k, None)
+            wf = self._watch_until_terminal(wf_id, sc, seen)
+
+        return self._summary(name, wf_id, wf)
+
+    def _watch_until_terminal(self, wf_id: str, sc: dict[str, Any], seen: dict[str, tuple[str, int]]) -> dict[str, Any]:
         signaled = killed = False
         wf: dict[str, Any] = {}
-
         # No polling: plexus-flow pushes the workflow's state on every change
         # (server-sent events), the same way it pushes tasks to workers.
         for wf in watch_workflow(self.api, wf_id):
@@ -169,8 +200,7 @@ class Runner:
             if not signaled and steps.get("await-approval", {}).get("status") == "RUNNING":
                 signaled = True
                 self._review(wf_id, wf, sc.get("decision"))
-
-        return self._summary(name, wf_id, wf)
+        return wf
 
     # -- reviewer ------------------------------------------------------------
 
@@ -224,7 +254,10 @@ class Runner:
         color = STATUS_COLOR.get(status, RESET)
         attempt = st.get("attempt", 0)
         extra = f" {DIM}(attempt {attempt}){RESET}" if attempt > 1 else ""
-        if st.get("kind") == "wait_signal" and status == "RUNNING":
+        if status == "SKIPPED" and st.get("when"):
+            w = st["when"]
+            extra = f" {DIM}(when {w.get('source')}.{w.get('field')} {w.get('op')} {w.get('value')} → false){RESET}"
+        elif st.get("kind") == "wait_signal" and status == "RUNNING":
             extra = f" {DIM}(waiting for signal '{st.get('signal')}'){RESET}"
         print(f"  {DIM}•{RESET} {name:<16} {color}{status}{RESET}{extra}")
         if st.get("error") and status in ("FAILED", "RUNNING"):
@@ -244,7 +277,10 @@ class Runner:
         refund = steps.get("issue-refund", {})
         print()
         if status == "COMPLETED":
-            print(f"{GREEN}{BOLD}✔ {status}{RESET}: ticket resolved, refund kept, reply sent.")
+            if refund.get("status") == "SKIPPED":
+                print(f"{GREEN}{BOLD}✔ {status}{RESET}: warranty escalation sent; issue-refund skipped declaratively (`when` guard).")
+            else:
+                print(f"{GREEN}{BOLD}✔ {status}{RESET}: ticket resolved, refund kept, reply sent.")
         elif status == "COMPENSATED":
             print(f"{YELLOW}{BOLD}↩ {status}{RESET} ({RED}{wf.get('error_code')}{RESET}): {wf.get('error')}")
             if refund.get("status") == "COMPENSATED":
@@ -256,17 +292,23 @@ class Runner:
         if target := SCENARIOS[name].get("crash_on"):
             if prog := steps.get(target, {}).get("progress"):
                 print(f"  {CYAN}♻️  Heartbeat checkpoint preserved across worker crash ({target}):{RESET} {prog}")
-            calls = llm.read_ledger(wf_id)
-            print(f"\n  {BOLD}LLM call ledger{RESET} (one line per model call; pids show the worker restart):")
-            for step_name in wf.get("step_order", []):
-                rows = [c for c in calls if c["step"] == step_name]
-                if not rows:
-                    continue
-                pids = sorted({c["pid"] for c in rows})
-                mark = f"{YELLOW}← in flight during the crash, re-run{RESET}" if len(rows) > 1 else f"{GREEN}✓ once{RESET}"
-                print(f"    {step_name:<16} {len(rows)} call(s)  pids={pids}  {mark}")
+            self._print_llm_ledger(wf_id, wf, "← in flight during the crash, re-run")
+        elif SCENARIOS[name].get("replay_from"):
+            self._print_llm_ledger(wf_id, wf, "← replayed after input patch")
         print(f"  {DIM}took {self._elapsed(wf):.2f}s end to end · trace: {self.api}/  (workflow {wf_id}){RESET}")
         return status
+
+    @staticmethod
+    def _print_llm_ledger(wf_id: str, wf: dict[str, Any], multi_label: str) -> None:
+        calls = llm.read_ledger(wf_id)
+        print(f"\n  {BOLD}LLM call ledger{RESET} (one line per model call):")
+        for step_name in wf.get("step_order", []):
+            rows = [c for c in calls if c["step"] == step_name]
+            if not rows:
+                continue
+            pids = sorted({c["pid"] for c in rows})
+            mark = f"{YELLOW}{multi_label}{RESET}" if len(rows) > 1 else f"{GREEN}✓ once (cached in Raft){RESET}"
+            print(f"    {step_name:<16} {len(rows)} call(s)  pids={pids}  {mark}")
 
 
 def main() -> None:
@@ -286,8 +328,20 @@ def main() -> None:
         print(f"\n{CYAN}{'═' * 78}{RESET}\n{BOLD}Summary{RESET}")
         for n, status in results:
             color = GREEN if status == "COMPLETED" else YELLOW if status == "COMPENSATED" else RED
-            print(f"  {n:<14} {color}{status}{RESET}")
+            print(f"  {n:<18} {color}{status}{RESET}")
+
+        # Zero-CDC Faceted Search query directly against plexus-flow
+        sr = search_workflows(runner.api, flow="support-ticket-resolver")
+        facets = sr.get("facets", {})
+        status_facets = ", ".join(f"{b['value']}:{b['count']}" for b in facets.get("status", []))
+        err_facets = ", ".join(f"{b['value']}:{b['count']}" for b in facets.get("error_code", []))
+        print(f"\n{BOLD}Zero-CDC Faceted Workflow Search{RESET} ({DIM}GET /api/v1/workflows/search, {sr.get('took_ns', 0) / 1e6:.2f} ms{RESET}):")
+        print(f"  total workflows : {sr.get('total', 0)}")
+        print(f"  status facets   : {status_facets}")
+        if err_facets:
+            print(f"  error_code      : {err_facets}")
 
 
 if __name__ == "__main__":
     main()
+

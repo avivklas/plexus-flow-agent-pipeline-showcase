@@ -17,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/avivklas/agent-pipeline-showcase/go/tools"
+	"github.com/avivklas/plexus-flow/pkg/worker"
 	"github.com/avivklas/plexus-flow/pkg/workerclient"
 )
 
@@ -28,10 +29,10 @@ func main() {
 
 	w := workerclient.New(*grpcAddr, workerclient.Options{WorkerID: *workerID, MaxConcurrency: *maxConcurrency})
 	reg := w.Registry()
-	reg.Register("issue-refund", tools.IssueRefund)
-	reg.Register("reverse-refund", tools.ReverseRefund)
-	reg.Register("send-reply", tools.SendReply)
-	reg.Register("retract-reply", tools.RetractReply)
+	worker.RegisterTyped(reg, "issue-refund", tools.IssueRefund)
+	worker.RegisterTyped(reg, "reverse-refund", tools.ReverseRefund)
+	worker.RegisterTyped(reg, "send-reply", tools.SendReply)
+	worker.RegisterTyped(reg, "retract-reply", tools.RetractReply)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

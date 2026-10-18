@@ -67,7 +67,9 @@ def ticket_text(t: dict[str, Any]) -> str:
 async def triage(ctx: TaskContext, t: dict[str, Any]) -> dict[str, Any]:
     def mock() -> dict[str, Any]:
         text = ticket_text(t).lower()
-        if re.search(r"crack|broken|damag|leak|dent", text):
+        if re.search(r"warranty|serial|stop.*working|stopped working|faulty", text):
+            category = "warranty"
+        elif re.search(r"crack|broken|damag|leak|dent", text):
             category = "damaged_item"
         elif re.search(r"charged twice|double|billing|charge", text):
             category = "billing_error"
@@ -230,7 +232,10 @@ async def planner(ctx: TaskContext, t: dict[str, Any]) -> dict[str, Any]:
 
 @agent("draft-reply-agent")
 async def draft_reply(ctx: TaskContext, t: dict[str, Any]) -> dict[str, Any]:
-    plan, refund = ctx.dependency_outputs["resolution-plan"], ctx.dependency_outputs["issue-refund"]
+    plan = ctx.dependency_outputs["resolution-plan"]
+    # When issue-refund is skipped by its declarative `when` guard (refund_amount == 0),
+    # it has no output in dependency_outputs.
+    refund = ctx.dependency_outputs.get("issue-refund") or {"skipped": True, "amount": 0}
     first = plan["customer_name"].split()[0]
     chaos = t.get("chaos") or {}
 
