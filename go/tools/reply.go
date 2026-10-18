@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -33,6 +32,12 @@ type Sent struct {
 	Reviewer  string `json:"approved_by"`
 }
 
+// RetractReplyResult is the output of retract-reply.
+type RetractReplyResult struct {
+	Retracted bool   `json:"retracted"`
+	MessageID string `json:"message_id"`
+}
+
 var outbox = struct {
 	sync.Mutex
 	sent map[string]Sent // workflow ID -> message
@@ -41,56 +46,50 @@ var outbox = struct {
 // SendReply posts the approved reply to the customer. A reviewer rejection
 // arrives here as an ordinary signal payload; turning it into a permanent
 // failure is what makes plexus-flow roll back the refund.
-func SendReply(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+func SendReply(ctx context.Context, t Ticket) (Sent, error) {
 	if err := benchSleep(ctx); err != nil {
-		return nil, err
+		return Sent{}, err
 	}
-	var t Ticket
-	_ = json.Unmarshal(input, &t)
 	approval, err := dep[Approval](ctx, "await-approval")
 	if err != nil {
-		return nil, err
+		return Sent{}, err
 	}
 	if !approval.Approved {
 		logf(red, "Helpdesk", "%s: reviewer %s rejected the reply: %q", t.TicketID, approval.Reviewer, approval.Note)
-		return nil, worker.NonRetryable(worker.WithCode("REJECTED_BY_HUMAN",
+		return Sent{}, worker.NonRetryable(worker.WithCode("REJECTED_BY_HUMAN",
 			fmt.Errorf("reviewer %s rejected the resolution: %s", approval.Reviewer, approval.Note)))
 	}
 	draft, err := dep[Draft](ctx, "draft-reply")
 	if err != nil {
-		return nil, err
+		return Sent{}, err
 	}
 	if strings.TrimSpace(draft.Body) == "" {
-		return nil, worker.NonRetryable(errors.New("empty reply body"))
+		return Sent{}, worker.NonRetryable(errors.New("empty reply body"))
 	}
 
 	wf := workflowID(ctx)
 	outbox.Lock()
 	defer outbox.Unlock()
 	if s, ok := outbox.sent[wf]; ok { // idempotent
-		return json.Marshal(s)
+		return s, nil
 	}
 	s := Sent{MessageID: fmt.Sprintf("MSG-%d", time.Now().UnixNano()%1_000_000), TicketID: t.TicketID, Reviewer: approval.Reviewer}
 	outbox.sent[wf] = s
 
 	logf(green, "Helpdesk", "%s: ✉️  reply %s sent (approved by %s)", t.TicketID, s.MessageID, approval.Reviewer)
 	if quiet {
-		return json.Marshal(s)
+		return s, nil
 	}
 	fmt.Printf("%s    ┌─ Subject: %s%s\n", cyan, draft.Subject, reset)
 	for _, line := range strings.Split(strings.TrimSpace(draft.Body), "\n") {
 		fmt.Printf("%s    │ %s%s\n", cyan, line, reset)
 	}
 	fmt.Printf("%s    └─%s\n", cyan, reset)
-	return json.Marshal(s)
+	return s, nil
 }
 
 // RetractReply undoes SendReply by withdrawing the message from the ticket thread.
-func RetractReply(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
-	var s Sent
-	if err := json.Unmarshal(input, &s); err != nil {
-		return nil, worker.NonRetryable(err)
-	}
+func RetractReply(ctx context.Context, s Sent) (RetractReplyResult, error) {
 	outbox.Lock()
 	for wf, m := range outbox.sent {
 		if m.MessageID == s.MessageID {
@@ -99,5 +98,5 @@ func RetractReply(ctx context.Context, input json.RawMessage) (json.RawMessage, 
 	}
 	outbox.Unlock()
 	logf(purple, "Helpdesk ↩ COMPENSATION", "%s: reply %s retracted from the ticket thread", s.TicketID, s.MessageID)
-	return json.Marshal(map[string]any{"retracted": true, "message_id": s.MessageID})
+	return RetractReplyResult{Retracted: true, MessageID: s.MessageID}, nil
 }

@@ -1,0 +1,8 @@
+{
+  "ticket_id": "TCK-1005",
+  "customer_id": "CUST-4417",
+  "order_id": "ORD-55120",
+  "channel": "email",
+  "subject": "Espresso machine stopped working under warranty",
+  "body": "My Barista Pro espresso machine (serial SN-99412) stopped working after 4 months. The pump makes a humming sound and won't heat up. Can I file a warranty claim?"
+}
